@@ -28,6 +28,7 @@ STOCK_LIST_FILE = os.path.join(CACHE_DIR, 'stock_list.json')
 
 stock_list_cache = None
 stock_name_map = {}  # code -> name
+last_served_code = None  # 上次返回的股票代码，用于去重
 
 def ensure_cache_dir():
     os.makedirs(CACHE_DIR, exist_ok=True)
@@ -242,29 +243,37 @@ def fetch_stock_data(code, name=None):
 
 
 def get_random_stock_data(min_bars=200, max_retries=20):
-    """随机选一只股票，拉取数据（重试直到有足够历史K线）"""
+    """随机选一只股票，拉取数据（重试直到有足够历史K线，且不与上次重复）"""
+    global last_served_code
     stocks = stock_list_cache or fetch_stock_list()
     if not stocks:
         return None
 
+    # 构建候选列表：排除上次返回的股票
+    available = [s for s in stocks if s != last_served_code]
+    if not available:
+        available = stocks[:]  # 只有一只股票时无法排除
+
     tried = set()
     for _ in range(max_retries):
-        code = random.choice(stocks)
-        if code in tried and len(tried) < len(stocks):
-            code = random.choice(stocks)
+        code = random.choice(available)
+        if code in tried and len(tried) < len(available):
+            code = random.choice(available)
         tried.add(code)
 
         name = stock_name_map.get(code, code)
         data = fetch_stock_data(code, name)
         if data and data.get('bars') and len(data['bars']) >= min_bars:
+            last_served_code = code
             return data
 
     # 放宽条件再试
     for _ in range(10):
-        code = random.choice(stocks)
+        code = random.choice(available)
         name = stock_name_map.get(code, code)
         data = fetch_stock_data(code, name)
         if data and data.get('bars') and len(data['bars']) >= 100:
+            last_served_code = code
             return data
 
     return None

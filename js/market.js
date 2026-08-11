@@ -6,6 +6,7 @@
 
   var SERVER_URL = '';      // 同源访问
   var serverAvailable = null;  // null=未检测, true/false
+  var lastServerCode = null;  // 上次从服务器获取的股票代码，用于去重
 
   // ===== 服务器检测 =====
   function checkServer() {
@@ -69,6 +70,25 @@
           throw new Error('insufficient data');
         }
 
+        // 前端去重：如果服务器返回了和上次相同的股票，再请求一次
+        var code = data.code;
+        if (lastServerCode && code === lastServerCode) {
+          console.log('[Market] server returned same stock as last time, retrying...');
+          return fetch(SERVER_URL + '/api/random', { signal: new AbortController().signal })
+            .then(function (r) { return r.json(); })
+            .then(function (data2) {
+              if (data2 && data2.bars && data2.bars.length >= 100) {
+                lastServerCode = data2.code;
+                return data2;
+              }
+              lastServerCode = code;
+              return data;  // 用第一次的数据
+            });
+        }
+        lastServerCode = code;
+        return data;
+      })
+      .then(function (data) {
         var rawDaily = data.bars.map(function (b, i) {
           return {
             idx: i,

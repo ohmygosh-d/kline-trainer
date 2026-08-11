@@ -865,6 +865,10 @@
       $('event-modal').style.display = 'none';
       newSession();
     };
+    $('btn-event-review').onclick = function () {
+      $('event-modal').style.display = 'none';
+      enterReview();
+    };
 
     // 周期选择器
     var periodBtns = document.querySelectorAll('.period-btn');
