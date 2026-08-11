@@ -104,6 +104,80 @@
   function fmtNum(v) { return v.toLocaleString('zh-CN', { maximumFractionDigits: 2 }); }
   function fmtPct(v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
   function cls(v) { return v > 0 ? 'up' : v < 0 ? 'down' : ''; }
+
+  // ===== 数字滚动动画 =====
+  var rollAnims = {};  // elId -> { rafId, from, to, startTime, duration, formatter, lastVal }
+
+  function rollNumber(elId, toVal, formatter, duration) {
+    var el = $(elId);
+    if (!el) return;
+    duration = duration || 600;
+    formatter = formatter || function (v) { return v.toFixed(2); };
+
+    // 获取当前值（从上次动画的最终值，或解析当前文本）
+    var fromVal = rollAnims[elId] ? rollAnims[elId].lastVal : null;
+    if (fromVal === null || fromVal === undefined) {
+      // 尝试从文本解析数字
+      var text = el.textContent.replace(/[^\d.\-]/g, '');
+      fromVal = parseFloat(text);
+      if (isNaN(fromVal)) fromVal = 0;
+    }
+
+    // 如果值没变，不动画
+    if (Math.abs(toVal - fromVal) < 0.01) {
+      el.textContent = formatter(toVal);
+      rollAnims[elId] = { lastVal: toVal };
+      return;
+    }
+
+    // 取消之前的动画
+    if (rollAnims[elId] && rollAnims[elId].rafId) {
+      cancelAnimationFrame(rollAnims[elId].rafId);
+    }
+
+    // 涨跌颜色闪烁
+    var isUp = toVal > fromVal;
+    var parent = el.closest('.acct-item, .wallet-balance-row, .wallet-stat, .stat-block, .position-info > div, .review-result, .price-item');
+    if (parent) {
+      parent.classList.remove('flash-up', 'flash-down');
+      void parent.offsetWidth; // 触发重排重启动画
+      parent.classList.add(isUp ? 'flash-up' : 'flash-down');
+      setTimeout(function () { parent.classList.remove('flash-up', 'flash-down'); }, 800);
+    }
+
+    var anim = {
+      from: fromVal,
+      to: toVal,
+      startTime: performance.now(),
+      duration: duration,
+      formatter: formatter,
+      lastVal: toVal,
+      rafId: null
+    };
+
+    function tick() {
+      var now = performance.now();
+      var t = (now - anim.startTime) / anim.duration;
+      if (t >= 1) {
+        el.textContent = formatter(anim.to);
+        delete rollAnims[elId].rafId;
+        return;
+      }
+      // easeOutCubic
+      var eased = 1 - Math.pow(1 - t, 3);
+      var val = anim.from + (anim.to - anim.from) * eased;
+      el.textContent = formatter(val);
+      anim.rafId = requestAnimationFrame(tick);
+    }
+    anim.rafId = requestAnimationFrame(tick);
+    rollAnims[elId] = anim;
+  }
+
+  // 便捷格式化器
+  var fmtMoneyRoll = function (v) { return fmtMoney(v); };
+  var fmtPctRoll = function (v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; };
+  var fmtNumRoll = function (v) { return v.toLocaleString('zh-CN', { maximumFractionDigits: 2 }); };
+  var fmtPlain = function (v) { return v.toFixed(2); };
   function toast(msg, type) {
     const el = $('toast');
     el.textContent = msg;
@@ -288,15 +362,13 @@
     var periodLabel = s.period === 'daily' ? '日线' : s.period === 'weekly' ? '周线' : '月线';
     $('period-label').textContent = periodLabel;
 
-    // 账户
-    $('account-balance').textContent = fmtMoney(s.capital);
-    $('account-cash').textContent = fmtMoney(s.cash);
+    // 账户（数字滚动动画）
+    rollNumber('account-balance', s.capital, fmtMoneyRoll);
+    rollNumber('account-cash', s.cash, fmtMoneyRoll);
     const pos = s.position;
     const posVal = pos ? pos.qty * pos.price : 0;
-    $('account-equity').textContent = fmtMoney(s.equity);
-    const ap = $('account-pnl');
-    ap.textContent = fmtMoney(s.pnl);
-    ap.className = cls(s.pnl);
+    rollNumber('account-equity', s.equity, fmtMoneyRoll);
+    rollNumber('account-pnl', s.pnl, fmtMoneyRoll);
 
     // 持仓
     if (pos) {
@@ -306,8 +378,8 @@
       $('pos-qty').textContent = pos.qty;
       $('pos-cost').textContent = '¥' + pos.cost.toFixed(2);
       $('pos-price').textContent = '¥' + pos.price.toFixed(2);
-      const ppnl = $('pos-pnl'); ppnl.textContent = fmtMoney(pos.pnl); ppnl.className = cls(pos.pnl);
-      const ppp = $('pos-pnl-pct'); ppp.textContent = fmtPct(pos.pnlPct); ppp.className = cls(pos.pnlPct);
+      rollNumber('pos-pnl', pos.pnl, fmtMoneyRoll);
+      rollNumber('pos-pnl-pct', pos.pnlPct, fmtPctRoll);
     } else {
       $('position-empty').style.display = 'block';
       $('position-info').style.display = 'none';
@@ -367,7 +439,10 @@
     Chart.setTradeMarkers(s.trades, s.position);
     Chart.draw();
     updateAll(s);
-    if (s.position) toast('半仓买入 ' + qty + ' 股 @ ¥' + s.position.cost.toFixed(2), 'success');
+    if (s.position) {
+      toast('半仓买入 ' + qty + ' 股 @ ¥' + s.position.cost.toFixed(2), 'success');
+      Chart.flashTrade(s.visibleCount - 1, 'buy', s.position.cost, qty);
+    }
   }
 
   function doBuyFull() {
@@ -378,7 +453,10 @@
     Chart.setTradeMarkers(s.trades, s.position);
     Chart.draw();
     updateAll(s);
-    if (s.position) toast('全仓买入 ' + qty + ' 股 @ ¥' + s.position.cost.toFixed(2), 'success');
+    if (s.position) {
+      toast('全仓买入 ' + qty + ' 股 @ ¥' + s.position.cost.toFixed(2), 'success');
+      Chart.flashTrade(s.visibleCount - 1, 'buy', s.position.cost, qty);
+    }
   }
 
   function doSellHalf() {
@@ -391,6 +469,7 @@
     Chart.draw();
     updateAll(s);
     toast('半仓卖出 ' + qty + ' 股 @ ¥' + (s.lastBar ? s.lastBar.close.toFixed(2) : '--'), 'success');
+    Chart.flashTrade(s.visibleCount - 1, 'sell', s.lastBar ? s.lastBar.close : 0, qty);
   }
 
   function doSellFull() {
@@ -402,6 +481,7 @@
     Chart.draw();
     updateAll(s);
     toast('全仓卖出 ' + pos.qty + ' 股', 'success');
+    Chart.flashTrade(s.visibleCount - 1, 'sell', s.lastBar ? s.lastBar.close : 0, pos.qty);
   }
 
   function doNext() {
@@ -520,7 +600,7 @@
 
   // ---------- 钱包 UI ----------
   function updateWalletUI() {
-    $('wallet-balance').textContent = fmtMoney(Wallet.balance);
+    rollNumber('wallet-balance', Wallet.balance, fmtMoneyRoll);
     $('wallet-bankrupt').textContent = Wallet.bankruptCount + ' 次';
     $('wallet-fortune').textContent = Wallet.fortuneCount + ' 次';
 
@@ -532,7 +612,7 @@
     else statusEl.textContent = '即将暴富';
 
     var s = Trainer.getState();
-    if (s) { $('account-balance').textContent = fmtMoney(s.capital); }
+    if (s) { rollNumber('account-balance', s.capital, fmtMoneyRoll); }
     drawAssetCurve();
   }
 

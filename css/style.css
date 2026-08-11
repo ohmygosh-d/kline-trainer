@@ -307,6 +307,82 @@ body{
 ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:#94a3b8;}
 
+/* ===== 数字滚动动画 · 涨跌闪烁 ===== */
+@keyframes flashUp {
+  0% { background: var(--green-bg); }
+  100% { background: transparent; }
+}
+@keyframes flashDown {
+  0% { background: var(--red-bg); }
+  100% { background: transparent; }
+}
+.flash-up { animation: flashUp .8s ease-out; }
+.flash-down { animation: flashDown .8s ease-out; }
+
+/* 按钮按下波纹效果 */
+.btn { position: relative; overflow: hidden; }
+.btn::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 0; height: 0;
+  border-radius: 50%;
+  background: rgba(255,255,255,.4);
+  transform: translate(-50%, -50%);
+  transition: width .4s ease, height .4s ease;
+}
+.btn:active::after { width: 200%; height: 200%; transition: 0s; }
+.btn-primary::after { background: rgba(255,255,255,.3); }
+.btn-buy::after { background: rgba(255,255,255,.3); }
+.btn-sell::after { background: rgba(255,255,255,.3); }
+
+/* 新K线出现的脉冲呼吸 */
+@keyframes newBarPulse {
+  0% { box-shadow: inset 3px 0 0 var(--blue); }
+  100% { box-shadow: inset 0 0 0 transparent; }
+}
+
+/* 进度条动画过渡 */
+.progress-fill { transition: width .35s cubic-bezier(.4,0,.2,1); }
+
+/* Toast 出入场更顺滑 */
+.toast {
+  transition: all .3s cubic-bezier(.4,0,.2,1);
+}
+.toast.show {
+  transform: translateX(-50%) translateY(0);
+  animation: toastBounce .3s cubic-bezier(.4,0,.2,1);
+}
+@keyframes toastBounce {
+  0% { transform: translateX(-50%) translateY(20px) scale(.95); }
+  60% { transform: translateX(-50%) translateY(-3px) scale(1.02); }
+  100% { transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* 弹窗入场动画 */
+.modal-overlay { animation: fadeIn .2s ease-out; }
+.modal { animation: modalIn .25s cubic-bezier(.4,0,.2,1); }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(12px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 周期切换按钮过渡 */
+.period-btn { transition: all .2s cubic-bezier(.4,0,.2,1); }
+
+/* 价格变化时数字闪烁 */
+.price-item b { transition: color .15s; }
+.b.up { color: var(--red); }
+.b.down { color: var(--green); }
+
+/* 持仓卡片入场 */
+.position-info { animation: slideIn .25s ease-out; }
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 /* 响应式 */
 @media (max-width:900px){
   .main{flex-direction:column;}

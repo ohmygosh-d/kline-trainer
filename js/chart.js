@@ -16,6 +16,7 @@
     grid: 'rgba(0,0,0,.06)',
     gridStrong: 'rgba(0,0,0,.1)',
     text: '#94a3b8',
+    textDim: '#94a3b8',
     textBright: '#334155',
     cross: 'rgba(148,163,184,.5)',
     zoneBg: 'rgba(0,0,0,.02)',
@@ -56,6 +57,198 @@
   var isDragging = false, dragStartX = 0, dragStartViewStart = 0;
   var touchMode = null, pinchStartDist = 0, pinchStartViewBars = 0;
   var touchStartX = 0, touchStartViewStart = 0;
+
+  // ===== 动画系统 =====
+  var flashEffects = [];   // 交易闪光效果队列
+  var slideAnim = null;    // K线推进滑动动画
+  var pulseAnim = null;    // 新K线高光脉冲
+  var animRAF = null;      // requestAnimationFrame ID
+
+  // 缓动函数
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+  function easeOutBack(t) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
+
+  // 启动交易闪光：在指定K线索引位置画脉冲环+浮动文字
+  function flashTrade(barIdx, type, price, qty) {
+    if (barIdx < 0 || barIdx >= bars.length) return;
+    flashEffects.push({
+      barIdx: barIdx,
+      type: type,     // 'buy' | 'sell'
+      price: price,
+      qty: qty,
+      startTime: performance.now(),
+      duration: 800
+    });
+    ensureAnimLoop();
+  }
+
+  // 启动K线推进动画
+  function startSlideAnim(fromProgress, toProgress) {
+    if (fromProgress === toProgress) return;
+    slideAnim = {
+      from: fromProgress,
+      to: toProgress,
+      startTime: performance.now(),
+      duration: 350
+    };
+    ensureAnimLoop();
+  }
+
+  // 启动新K线脉冲
+  function startPulse(barIdx) {
+    pulseAnim = {
+      barIdx: barIdx,
+      startTime: performance.now(),
+      duration: 600
+    };
+    ensureAnimLoop();
+  }
+
+  // 确保动画循环运行
+  function ensureAnimLoop() {
+    if (animRAF !== null) return;
+    function tick() {
+      var now = performance.now();
+      var hasActive = false;
+
+      // 清理过期的闪光
+      flashEffects = flashEffects.filter(function (f) {
+        return now - f.startTime < f.duration;
+      });
+      if (flashEffects.length > 0) hasActive = true;
+
+      // 检查滑动动画
+      if (slideAnim) {
+        var t = (now - slideAnim.startTime) / slideAnim.duration;
+        if (t >= 1) {
+          slideAnim = null;
+        } else {
+          hasActive = true;
+        }
+      }
+
+      // 检查脉冲动画
+      if (pulseAnim) {
+        var pt = (now - pulseAnim.startTime) / pulseAnim.duration;
+        if (pt >= 1) {
+          pulseAnim = null;
+        } else {
+          hasActive = true;
+        }
+      }
+
+      draw();
+      if (hasActive) {
+        animRAF = requestAnimationFrame(tick);
+      } else {
+        animRAF = null;
+      }
+    }
+    animRAF = requestAnimationFrame(tick);
+  }
+
+  // 绘制交易闪光效果（在 crosshair canvas 上）
+  function drawFlashEffects(layout) {
+    if (flashEffects.length === 0 && !pulseAnim) return;
+    var now = performance.now();
+
+    // 交易闪光
+    for (var i = 0; i < flashEffects.length; i++) {
+      var f = flashEffects[i];
+      var elapsed = now - f.startTime;
+      var t = elapsed / f.duration;
+      if (t > 1) continue;
+
+      var visStart = viewStart;
+      var bi = f.barIdx - visStart;
+      if (bi < 0 || bi >= viewBars) continue;
+
+      var layout2 = getLayout();
+      var chartW = layout2.w - layout2.padR - layout2.padL;
+      var cw = chartW / viewBars;
+      var x = layout2.padL + cw * (bi + 0.5);
+
+      var bar = bars[f.barIdx];
+      if (!bar) continue;
+
+      var color = f.type === 'buy' ? '#22c55e' : '#ef4444';
+      var y = f.type === 'buy' ? priceToY(bar.low, layout2, priceRange) + 18 : priceToY(bar.high, layout2, priceRange) - 18;
+
+      // 脉冲光环
+      var ringR = 8 + t * 28;
+      var ringAlpha = (1 - t) * 0.6;
+      xctx.strokeStyle = color.replace(')', '').replace('rgb(', '').replace('#', '');
+      // 直接用 rgba
+      var rgb = f.type === 'buy' ? '34,197,94' : '239,68,68';
+      xctx.strokeStyle = 'rgba(' + rgb + ',' + ringAlpha + ')';
+      xctx.lineWidth = 2 * (1 - t * 0.5);
+      xctx.beginPath();
+      xctx.arc(x, y, ringR, 0, Math.PI * 2);
+      xctx.stroke();
+
+      // 第二层光环（延迟）
+      if (t > 0.2) {
+        var t2 = (t - 0.2) / 0.8;
+        var ringR2 = 6 + t2 * 22;
+        var ringAlpha2 = (1 - t2) * 0.3;
+        xctx.strokeStyle = 'rgba(' + rgb + ',' + ringAlpha2 + ')';
+        xctx.lineWidth = 1.5;
+        xctx.beginPath();
+        xctx.arc(x, y, ringR2, 0, Math.PI * 2);
+        xctx.stroke();
+      }
+
+      // 浮动文字（向上飘）
+      var textY = y - t * 30;
+      var textAlpha = t < 0.15 ? t / 0.15 : (1 - (t - 0.15) / 0.85);
+      var scale = t < 0.2 ? easeOutBack(t / 0.2) : 1;
+      var label = (f.type === 'buy' ? '买 ' : '卖 ') + f.qty + '股';
+      xctx.save();
+      xctx.translate(x, textY);
+      xctx.scale(scale, scale);
+      xctx.font = 'bold 12px -apple-system,"Microsoft YaHei",sans-serif';
+      xctx.textAlign = 'center';
+      xctx.textBaseline = 'middle';
+      // 文字背景
+      var tw = xctx.measureText(label).width + 16;
+      xctx.fillStyle = 'rgba(' + rgb + ',' + (textAlpha * 0.9) + ')';
+      xctx.beginPath();
+      var rr = 8;
+      xctx.roundRect ? xctx.roundRect(-tw / 2, -10, tw, 20, rr) : (function () {
+        xctx.moveTo(-tw / 2 + rr, -10);
+        xctx.arcTo(tw / 2, -10, tw / 2, 10, rr);
+        xctx.arcTo(tw / 2, 10, -tw / 2, 10, rr);
+        xctx.arcTo(-tw / 2, 10, -tw / 2, -10, rr);
+        xctx.arcTo(-tw / 2, -10, tw / 2, -10, rr);
+        xctx.fill();
+      })();
+      xctx.fill();
+      // 文字
+      xctx.fillStyle = 'rgba(255,255,255,' + textAlpha + ')';
+      xctx.fillText(label, 0, 0);
+      xctx.restore();
+    }
+
+    // 新K线脉冲
+    if (pulseAnim) {
+      var pt = (now - pulseAnim.startTime) / pulseAnim.duration;
+      if (pt < 1) {
+        var pBi = pulseAnim.barIdx - viewStart;
+        if (pBi >= 0 && pBi < viewBars) {
+          var pLayout = getLayout();
+          var pChartW = pLayout.w - pLayout.padR - pLayout.padL;
+          var pCw = pChartW / viewBars;
+          var pX = pLayout.padL + pCw * (pBi + 0.5);
+          var pBar = bars[pulseAnim.barIdx];
+          if (pBar) {
+            var pulseAlpha = (1 - pt) * 0.25;
+            xctx.fillStyle = 'rgba(67,97,238,' + pulseAlpha + ')';
+            xctx.fillRect(pX - pCw / 2, pLayout.padT, pCw, pLayout.h - pLayout.padT - pLayout.padB);
+          }
+        }
+      }
+    }
+  }
 
   // ---------- 工具 ----------
   function setupCanvas(canvas) {
@@ -308,6 +501,7 @@
   }
 
   function setProgress(n) {
+    var oldProgress = progressCount;
     progressCount = Math.max(1, Math.min(n, bars.length));
     if (autoFollow) {
       // 自动跟踪：最新可见K线靠右
@@ -315,6 +509,10 @@
     }
     clampView();
     computeRanges();
+    // 新K线出现时触发脉冲
+    if (progressCount > oldProgress && progressCount > 1) {
+      startPulse(progressCount - 1);
+    }
   }
 
   function computeRanges() {
@@ -438,6 +636,7 @@
     if (opts.showKDJ) drawKDJPanel();
     if (opts.showRSI) drawRSIPanel();
     drawCross();
+    drawFlashEffects(getLayout());
   }
 
   // ===== 主K线图 =====
@@ -1076,6 +1275,11 @@
     xctx.fillText(fmt(b.volume), cx + 20, cy + 4);
   }
 
+  // 交易闪光效果绘制
+  function drawFlashLayer() {
+    drawFlashEffects(getLayout());
+  }
+
   // ---------- 控制 ----------
   function resize() {
     var m = setupCanvas(mainCanvas); if (m) mctx = m.ctx;
@@ -1120,6 +1324,7 @@
     init: init, setData: setData, setProgress: setProgress,
     setReviewMode: setReviewMode,
     setTradeMarkers: setTradeMarkers,
+    flashTrade: flashTrade,
     draw: draw, resize: resize,
     setShowMA: setShowMA, setShowVol: setShowVol,
     setShowMACD: setShowMACD, setShowKDJ: setShowKDJ,
