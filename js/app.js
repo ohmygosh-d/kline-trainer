@@ -286,6 +286,7 @@
     $('result-modal').style.display = 'none';
     $('event-modal').style.display = 'none';
     $('review-bar').style.display = 'none';
+    setTrainingUI();
 
     // 显示加载状态
     var loadingEl = showInlineLoading('正在随机选取全市场股票...');
@@ -544,8 +545,33 @@
     toast('复盘模式 · 可查看完整K线走势（含训练后数据）', 'success');
   }
 
+  // ---------- 按钮状态切换 ----------
+  function setFinishedUI() {
+    var btn = $('btn-restart');
+    btn.textContent = '新一局 ▶';
+    btn.className = 'btn btn-primary';
+    btn.style.cssText = 'font-size:14px;padding:10px 16px;width:100%;animation:pulse-btn 2s ease-in-out infinite;';
+    btn.onclick = newSession;
+    $('btn-buy-half').disabled = true;
+    $('btn-buy-full').disabled = true;
+    $('btn-sell-half').disabled = true;
+    $('btn-sell-full').disabled = true;
+    $('btn-next').disabled = true;
+    $('btn-close').disabled = true;
+    $('btn-finish').disabled = true;
+  }
+
+  function setTrainingUI() {
+    var btn = $('btn-restart');
+    btn.textContent = '重新训练';
+    btn.className = 'btn btn-ghost';
+    btn.style.cssText = 'font-size:12px;opacity:.7;padding:4px 8px;';
+    btn.onclick = function () { if (confirm('确定重新开始训练？当前进度将丢失')) newSession(); };
+  }
+
   // ---------- 训练结束 ----------
   Trainer.onFinish(function (s) {
+    setFinishedUI();
     var stats = Trainer.getStats();
     addHistory(stats, s);
     updateGlobalStats();

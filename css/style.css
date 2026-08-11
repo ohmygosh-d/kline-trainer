@@ -416,6 +416,10 @@ body{
   from { opacity: 0; transform: translateX(8px); }
   to { opacity: 1; transform: translateX(0); }
 }
+@keyframes pulse-btn {
+  0%,100% { box-shadow: 0 0 0 0 rgba(67,97,238,.3); }
+  50% { box-shadow: 0 0 0 6px rgba(67,97,238,0); }
+}
 
 /* 响应式 */
 @media (max-width:900px){
