@@ -296,10 +296,13 @@
 
       var s = Trainer.startWithMarket(market, { capital: Wallet.balance, totalBars: 150, period: period });
       Chart.setData(s.bars, s.trainStart, s.trainEnd);
+      Chart.setDrawingContext(s.code + '_' + period);
+      Chart.setActiveTool('cursor');
       Chart.setProgress(s.visibleCount);
       Chart.setTradeMarkers([], null);
       Chart.draw();
       updateAll(s);
+      updateSymbolInfo(s);
       updateWalletUI();
       updateGlobalStats();
 
@@ -311,10 +314,13 @@
       // 兜底：尝试模拟数据
       var fallback = Trainer.start({ capital: Wallet.balance, totalBars: 150 });
       Chart.setData(fallback.bars, fallback.trainStart, fallback.trainEnd);
+      Chart.setDrawingContext((fallback.code || 'sim') + '_' + period);
+      Chart.setActiveTool('cursor');
       Chart.setProgress(fallback.visibleCount);
       Chart.setTradeMarkers([], null);
       Chart.draw();
       updateAll(fallback);
+      updateSymbolInfo(fallback);
     }
 
     if (loadingEl) loadingEl.remove();
@@ -333,6 +339,12 @@
   }
 
   // ---------- UI 更新 ----------
+  function updateSymbolInfo(s) {
+    if (!s) return;
+    $('symbol-name').textContent = s.symbol || '未知股票';
+    $('symbol-code').textContent = s.code || (s.isReal ? '真实行情' : '双盲模式');
+  }
+
   function updateAll(s) {
     if (!s || !s.lastBar) return;
     const bar = s.lastBar;
@@ -509,7 +521,8 @@
     var s = Trainer.getState();
     var stats = Trainer.getStats();
     Chart.setReviewMode(true);
-    Chart.setTradeMarkers(s.trades, null);  // 复盘时 position 已清空但保留交易记录
+    Chart.setTradeMarkers(s.trades, null);
+    updateSymbolInfo(s);  // 复盘时 position 已清空但保留交易记录
 
     var periodLabel = s.period === 'daily' ? '日线' : s.period === 'weekly' ? '周线' : '月线';
     var dateRange = s.trainStartDate && s.trainEndDate ? (s.trainStartDate + ' ~ ' + s.trainEndDate) : '';
@@ -866,9 +879,12 @@
         var s = Trainer.changePeriod(period);
         if (s) {
           Chart.setData(s.bars, s.trainStart, s.trainEnd);
+          Chart.setDrawingContext(s.code + '_' + period);
+          Chart.setActiveTool('cursor');
           Chart.setProgress(s.visibleCount);
           Chart.draw();
           updateAll(s);
+          updateSymbolInfo(s);
           toast('已切换至' + (period === 'daily' ? '日线' : period === 'weekly' ? '周线' : '月线') + ' · 同一只股票', 'success');
         }
       };
