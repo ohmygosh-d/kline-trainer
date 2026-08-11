@@ -1,29 +1,18 @@
 {
   "stocks": [
-    {
-      "code": "600519",
-      "name": "贵州茅台",
-      "file": "600519.json",
-      "bars": 2086,
-      "startDate": "2018-01-02",
-      "endDate": "2026-08-07"
-    },
-    {
-      "code": "601318",
-      "name": "中国平安",
-      "file": "601318.json",
-      "bars": 2086,
-      "startDate": "2018-01-02",
-      "endDate": "2026-08-07"
-    },
-    {
-      "code": "600585",
-      "name": "海螺水泥",
-      "file": "600585.json",
-      "bars": 2086,
-      "startDate": "2018-01-02",
-      "endDate": "2026-08-07"
-    }
+    { "code": "600009", "name": "上海机场", "file": "600009.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "600030", "name": "中信证券", "file": "600030.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "600036", "name": "招商银行", "file": "600036.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "600276", "name": "恒瑞医药", "file": "600276.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "600519", "name": "贵州茅台", "file": "600519.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "600585", "name": "海螺水泥", "file": "600585.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "600690", "name": "海尔智家", "file": "600690.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "600887", "name": "伊利股份", "file": "600887.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "601012", "name": "隆基绿能", "file": "601012.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "601318", "name": "中国平安", "file": "601318.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "601633", "name": "长城汽车", "file": "601633.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "601888", "name": "中国中免", "file": "601888.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" },
+    { "code": "603259", "name": "药明康德", "file": "603259.json", "bars": 2086, "startDate": "2018-01-02", "endDate": "2026-08-07" }
   ],
-  "total": 3
+  "total": 13
 }

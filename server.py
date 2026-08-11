@@ -34,8 +34,23 @@ def ensure_cache_dir():
 
 # ─── STOCK LIST ───────────────────────────────────────────────
 
+def load_local_stock_list():
+    """从本地 data/index.json 加载股票列表（离线回退）"""
+    idx_file = os.path.join(BASE_DIR, 'data', 'index.json')
+    if not os.path.exists(idx_file):
+        return [], {}
+    try:
+        with open(idx_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        stocks = [s['code'] for s in data.get('stocks', [])]
+        name_map = {s['code']: s['name'] for s in data.get('stocks', [])}
+        return stocks, name_map
+    except Exception:
+        return [], {}
+
+
 def fetch_stock_list():
-    """从东方财富拉取全A股列表 ~5000+ 只（分页拉取）"""
+    """从东方财富拉取全A股列表 ~5000+ 只（分页拉取），失败则回退本地"""
     global stock_list_cache, stock_name_map
 
     # 缓存7天
@@ -60,7 +75,7 @@ def fetch_stock_list():
         'Referer': 'https://quote.eastmoney.com/'
     }
 
-    # 先获取总数
+    # 先获取总数（5秒超时，不卡启动）
     base_url = ('http://82.push2.eastmoney.com/api/qt/clist/get'
                 '?pn={pn}&pz=1000&po=1&np=1&fltt=2&invt=2&fid=f3'
                 '&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23'
@@ -70,7 +85,7 @@ def fetch_stock_list():
     try:
         url1 = base_url.format(pn=1)
         req = urllib.request.Request(url1, headers=headers)
-        resp = opener.open(req, timeout=20)
+        resp = opener.open(req, timeout=5)
         raw = json.loads(resp.read().decode('utf-8'))
         if raw and raw.get('data'):
             total = raw['data'].get('total', 0)
@@ -83,7 +98,7 @@ def fetch_stock_list():
                         stocks.append(code)
                         name_map[code] = name
     except Exception as e:
-        print(f'[Server] 股票列表第1页失败: {e}')
+        print(f'[Server] 东方财富API不可达: {e}')
 
     if total > 0:
         pages = (total + 999) // 1000
@@ -93,7 +108,7 @@ def fetch_stock_list():
             try:
                 url = base_url.format(pn=pn)
                 req = urllib.request.Request(url, headers=headers)
-                resp = opener.open(req, timeout=20)
+                resp = opener.open(req, timeout=10)
                 raw = json.loads(resp.read().decode('utf-8'))
                 if raw and raw.get('data') and raw['data'].get('diff'):
                     for item in raw['data']['diff']:
@@ -107,6 +122,16 @@ def fetch_stock_list():
             except Exception as e:
                 print(f'[Server] 第{pn}页失败: {e}')
                 continue
+
+    # 如果API完全不可达，回退到本地数据
+    if not stocks:
+        local_stocks, local_names = load_local_stock_list()
+        if local_stocks:
+            stocks = local_stocks
+            name_map = local_names
+            print(f'[Server] 东方财富API不可达，已回退到本地数据: {len(stocks)} 只股票')
+        else:
+            print('[Server] 警告: 本地数据也为空！')
 
     ensure_cache_dir()
     with open(STOCK_LIST_FILE, 'w', encoding='utf-8') as f:
@@ -128,7 +153,7 @@ def get_market_code(code):
 # ─── STOCK DATA ───────────────────────────────────────────────
 
 def fetch_stock_data(code, name=None):
-    """拉取单只股票历史日K线（最多3000根）"""
+    """拉取单只股票历史日K线（最多3000根），失败则回退本地文件"""
     cache_file = os.path.join(CACHE_DIR, f'{code}.json')
 
     # 缓存24小时
@@ -140,6 +165,23 @@ def fetch_stock_data(code, name=None):
                 if cached.get('bars') and len(cached['bars']) >= 100:
                     return cached
 
+    # 先尝试本地 data/ 目录（离线优先）
+    local_file = os.path.join(BASE_DIR, 'data', f'{code}.json')
+    if os.path.exists(local_file):
+        try:
+            with open(local_file, 'r', encoding='utf-8') as f:
+                local_data = json.load(f)
+            if local_data.get('bars') and len(local_data['bars']) >= 100:
+                # 补齐 count 字段（本地文件用 totalBars）
+                if 'count' not in local_data:
+                    local_data['count'] = local_data.get('totalBars', len(local_data['bars']))
+                if 'name' not in local_data or not local_data['name']:
+                    local_data['name'] = name or stock_name_map.get(code, code)
+                return local_data
+        except Exception:
+            pass
+
+    # 再尝试东方财富API
     secid = get_market_code(code)
     url = (f'https://push2his.eastmoney.com/api/qt/stock/kline/get'
            f'?secid={secid}'
@@ -156,7 +198,7 @@ def fetch_stock_data(code, name=None):
     opener = urllib.request.build_opener(proxy_handler)
 
     try:
-        resp = opener.open(req, timeout=15)
+        resp = opener.open(req, timeout=10)
         raw = json.loads(resp.read().decode('utf-8'))
 
         if raw and raw.get('data') and raw['data'].get('klines'):
@@ -189,7 +231,7 @@ def fetch_stock_data(code, name=None):
 
             return result
     except Exception as e:
-        print(f'[Server] {code} 数据拉取失败: {e}')
+        print(f'[Server] {code} 东方财富API拉取失败: {e}')
 
     # 回退到缓存
     if os.path.exists(cache_file):
@@ -262,7 +304,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _handle_random(self):
         data = get_random_stock_data(min_bars=200, max_retries=20)
         if data:
-            print(f'[Server] 随机选中: {data["name"]} ({data["code"]}) · {data["count"]} 根K线')
+            cnt = data.get('count', data.get('totalBars', len(data.get('bars', []))))
+            print(f'[Server] 随机选中: {data.get("name", "?")} ({data.get("code", "?")}) · {cnt} 根K线')
             self._json(data)
         else:
             self._json({'error': 'no stock data available'}, 500)

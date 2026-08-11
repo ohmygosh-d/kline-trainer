@@ -16,6 +16,6 @@ echo.
 echo   正在启动服务器...
 echo.
 
-"C:\Users\yuuone\.workbuddy\binaries\python\versions\3.13.12\python.exe" server.py
+python server.py
 
 pause
