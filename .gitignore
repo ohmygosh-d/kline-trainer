@@ -1,10 +1,12 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
+# Node
+node_modules/
+dist/
+*.db
+*.db-journal
+*.db-wal
 
-# Data cache
-data_cache/
+# User data (JSON file database — runtime data, not source)
+data/db/
 
 # IDE
 .vscode/
@@ -17,3 +19,4 @@ Thumbs.db
 # WorkBuddy
 .workbuddy/
 .screens/
+.chrome-profile/
