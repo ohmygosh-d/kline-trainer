@@ -23,6 +23,7 @@ export default function TrainPage() {
   const [showEvent, setShowEvent] = useState(false);
   const [event, setEvent] = useState<{ type: string; stats: any; state: TrainingState } | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
+  const [replayIdx, setReplayIdx] = useState<number | null>(null);
   const [indicators, setIndicators] = useState({ ma: true, vol: true, macd: false, kdj: false, rsi: false, boll: false });
   const [finished, setFinished] = useState(false);
 
@@ -31,9 +32,14 @@ export default function TrainPage() {
     setShowResult(false);
     setShowEvent(false);
     setReviewMode(false);
+    setReplayIdx(null);
     setFinished(false);
+    chart.setReviewMode(false);
     try {
       const data = await StockAPI.random();
+      if ((data as any).fromCache) {
+        showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
+      }
       const s = trainer.startWithMarket(
         { bars: data.bars, code: data.code, symbol: data.name, startDate: data.bars[0]?.date || '', endDate: data.bars[data.bars.length - 1]?.date, isReal: data.isReal },
         { capital: wallet.balance, totalBars: 150, period: 'daily' }
@@ -164,11 +170,32 @@ export default function TrainPage() {
   }, []);
 
   const enterReview = () => {
+    if (!training) return;
     setShowResult(false);
     setShowEvent(false);
     setReviewMode(true);
+    setReplayIdx(null);
     chart.setReviewMode(true);
-    chart.setTradeMarkers(training?.trades || [], null);
+    chart.setProgress(training.trainEnd);
+    chart.setTradeMarkers(training.trades || [], null);
+  };
+
+  const startReplay = () => {
+    if (!training) return;
+    setReplayIdx(training.trainStart);
+    chart.setProgress(training.trainStart);
+    chart.setTradeMarkers(training.trades.filter(t => t.index <= training!.trainStart), null);
+  };
+
+  const stepReplay = (delta: number) => {
+    if (!training) return;
+    setReplayIdx(prev => {
+      const base = prev ?? training.trainEnd;
+      const ni = Math.max(training.trainStart, Math.min(training.trainEnd, base + delta));
+      chart.setProgress(ni);
+      chart.setTradeMarkers(training.trades.filter(t => t.index <= ni), null);
+      return ni;
+    });
   };
 
   const toggleIndicator = (key: keyof typeof indicators) => {
@@ -184,10 +211,29 @@ export default function TrainPage() {
 
   if (loading && !training) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-slate-200 border-t-brand-500 rounded-full animate-spin mx-auto mb-3" />
-          <div className="text-sm text-slate-400">正在随机选取全市场股票...</div>
+      <div className="h-screen flex flex-col bg-slate-50">
+        <header className="h-12 bg-white border-b border-slate-200 flex items-center px-4 gap-4">
+          <div className="font-bold text-slate-800">📈 K线练习助手</div>
+          <div className="flex-1" />
+          <div className="w-16 h-4 bg-slate-100 rounded animate-pulse" />
+        </header>
+        <div className="flex-1 flex overflow-hidden">
+          <div className="flex-1 flex flex-col p-2">
+            <div className="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden relative">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-10 h-10 border-2 border-slate-200 border-t-brand-500 rounded-full animate-spin mx-auto mb-3" />
+                  <div className="text-sm text-slate-400">正在随机选取全市场股票...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <aside className="w-72 bg-white border-l border-slate-200 p-3 space-y-3">
+            <div className="h-16 bg-slate-50 rounded-lg animate-pulse" />
+            <div className="h-20 bg-slate-50 rounded-lg animate-pulse" />
+            <div className="h-12 bg-slate-50 rounded-lg animate-pulse" />
+            <div className="h-10 bg-slate-100 rounded-lg animate-pulse" />
+          </aside>
         </div>
       </div>
     );
@@ -196,20 +242,21 @@ export default function TrainPage() {
   return (
     <div className="h-screen flex flex-col bg-slate-50">
       {/* Top bar */}
-      <header className="h-12 bg-white border-b border-slate-200 flex items-center px-4 gap-4">
+      <header className="bg-white border-b border-slate-200 flex items-center flex-wrap px-4 gap-2 sm:gap-4 py-1.5 min-h-12">
         <div className="font-bold text-slate-800">📈 K线练习助手</div>
         <WalletBar />
         <div className="flex-1" />
-        <Link to="/history" className="text-sm text-slate-500 hover:text-brand-500">训练记录</Link>
-        <div className="text-sm text-slate-400">|</div>
+        <Link to="/history" className="hidden sm:block text-sm text-slate-500 hover:text-brand-500">训练记录</Link>
+        <Link to="/profile" className="hidden sm:block text-sm text-slate-500 hover:text-brand-500">用户中心</Link>
+        <div className="hidden sm:block text-sm text-slate-400">|</div>
         <span className="text-sm text-slate-600">{user?.username}</span>
         <button onClick={logout} className="text-sm text-slate-400 hover:text-red-500">退出</button>
       </header>
 
       {/* Main layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         {/* Chart area */}
-        <div className="flex-1 flex flex-col p-2">
+        <div className="flex-1 flex flex-col p-2 min-h-0">
           {/* Toolbar */}
           <div className="flex items-center gap-2 mb-1 px-1">
             <DrawToolbar />
@@ -257,7 +304,13 @@ export default function TrainPage() {
       </div>
       {/* Review bar */}
       {reviewMode && training && (
-        <ReviewBar training={training} onNextSession={newSession} />
+        <ReviewBar
+          training={training}
+          replayIdx={replayIdx}
+          onStep={stepReplay}
+          onReplay={startReplay}
+          onNextSession={newSession}
+        />
       )}
       {/* Modals */}
       {showResult && training && (

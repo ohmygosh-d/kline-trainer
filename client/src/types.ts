@@ -14,6 +14,7 @@ export interface StockData {
   name: string;
   bars: Bar[];
   isReal: boolean;
+  fromCache?: boolean;
 }
 
 /** 训练状态 */
@@ -111,4 +112,18 @@ export interface SessionRecord {
   win_rate: number;
   is_real: number;
   created_at: string;
+}
+
+/** 用户统计总览 */
+export interface UserStats {
+  total_sessions: number;
+  avg_pnl_pct: number;
+  win_sessions: number;
+  win_rate: number;
+  total_pnl: number;
+  bankrupt: number;
+  fortune: number;
+  best: { code: string; name: string; pct: number } | null;
+  worst: { code: string; name: string; pct: number } | null;
+  real_count: number;
 }

@@ -21,9 +21,15 @@ interface AppState {
   finishTraining: (stats: any, state: TrainingState) => Promise<'bankrupt' | 'fortune' | null>;
 }
 
+// 同步预取登录态：直接访问 /profile 等受保护路由时，
+// 避免首帧 user 为 null 触发「/profile → /login → /train」的错误跳转链路。
+// init() 仍会在后台用 /auth/me 校验 token，失效则自动登出。
+const bootUser = AuthAPI.isLoggedIn() ? AuthAPI.getUser() : null;
+const bootWallet = AuthAPI.isLoggedIn() ? WalletAPI.getWalletCache() : null;
+
 export const useStore = create<AppState>((set, get) => ({
-  user: null,
-  wallet: null,
+  user: bootUser,
+  wallet: bootWallet,
   training: null,
   loading: false,
   toast: null,

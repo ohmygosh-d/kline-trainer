@@ -30,7 +30,7 @@ export function TradePanel({ training, finished, onBuy, onSell, onNext, onFinish
   const pnlPct = (pnl / 100000) * 100;
 
   return (
-    <aside className="w-72 bg-white border-l border-slate-200 flex flex-col overflow-hidden">
+    <aside className="w-full md:w-72 h-[42vh] md:h-auto bg-white border-t md:border-t-0 md:border-l border-slate-200 flex flex-col overflow-hidden">
       {/* Price info */}
       <div className="p-3 border-b border-slate-200">
         <div className="grid grid-cols-4 gap-2 text-xs">

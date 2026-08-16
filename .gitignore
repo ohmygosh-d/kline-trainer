@@ -20,3 +20,8 @@ Thumbs.db
 .workbuddy/
 .screens/
 .chrome-profile/
+.chrome-profile2/
+.chrome_verify/
+profile_dump.html
+client/dist_bak/
+.trash/

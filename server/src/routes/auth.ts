@@ -68,4 +68,39 @@ router.get('/me', authMiddleware, (req: AuthRequest, res) => {
   res.json({ user: { id: user.id, username: user.username, created_at: user.created_at } });
 });
 
+// 修改密码
+router.put('/password', authMiddleware, (req: AuthRequest, res) => {
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) {
+    res.status(400).json({ error: '请填写原密码和新密码' });
+    return;
+  }
+  if (newPassword.length < 6) {
+    res.status(400).json({ error: '新密码至少 6 位' });
+    return;
+  }
+  const user = db.getUserById(req.userId!);
+  if (!user) {
+    res.status(404).json({ error: '用户不存在' });
+    return;
+  }
+  if (!bcrypt.compareSync(oldPassword, user.password_hash)) {
+    res.status(401).json({ error: '原密码错误' });
+    return;
+  }
+  db.changePassword(req.userId!, bcrypt.hashSync(newPassword, 10));
+  res.json({ ok: true });
+});
+
+// 用户统计总览
+router.get('/stats', authMiddleware, (req: AuthRequest, res) => {
+  res.json(db.getUserStats(req.userId!));
+});
+
+// 注销账号
+router.delete('/account', authMiddleware, (req: AuthRequest, res) => {
+  db.deleteUser(req.userId!);
+  res.json({ ok: true });
+});
+
 export default router;

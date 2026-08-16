@@ -98,6 +98,10 @@ export class ChartEngine {
   private animRAF: number | null = null;
   private initialized = false;
 
+  // Touch state (mobile)
+  private pinchStartDist = 0;
+  private pinchStartBars = 60;
+
   // Callbacks for saving drawings
   public onSaveDrawings: ((key: string, drawings: Drawing[]) => void) | null = null;
   public onLoadDrawings: ((key: string) => Drawing[] | null) | null = null;
@@ -765,6 +769,11 @@ export class ChartEngine {
     mc.addEventListener('wheel', this.onWheel, { passive: false });
     mc.addEventListener('dblclick', this.onDblClick);
     mc.addEventListener('mouseleave', this.onMouseLeave);
+    // Touch (mobile)
+    mc.addEventListener('touchstart', this.onTouchStart, { passive: false } as any);
+    mc.addEventListener('touchmove', this.onTouchMove, { passive: false } as any);
+    mc.addEventListener('touchend', this.onTouchEnd);
+    mc.addEventListener('touchcancel', this.onTouchEnd);
   }
 
   private onMouseDown = (e: MouseEvent) => {
@@ -902,6 +911,93 @@ export class ChartEngine {
       }
     }
     this.editDrag = null;
+  };
+
+  // ---- Touch handling (mobile) ----
+  private touchDist(e: TouchEvent): number {
+    const a = e.touches[0], b = e.touches[1];
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  private onTouchStart = (e: TouchEvent) => {
+    const mc = this.canvases['kline-canvas'];
+    if (!mc) return;
+    if (e.touches.length === 2) {
+      this.isDragging = false;
+      this.pinchStartDist = this.touchDist(e);
+      this.pinchStartBars = this.viewBars;
+      e.preventDefault();
+      return;
+    }
+    if (e.touches.length !== 1) return;
+    const rect = mc.getBoundingClientRect();
+    const t = e.touches[0];
+    const mx = t.clientX - rect.left;
+    const my = t.clientY - rect.top;
+    if (this.activeTool !== 'cursor') {
+      const { bi, price } = this.screenToData(t.clientX, t.clientY);
+      this.draft = { type: this.activeTool, pts: [{ bi, price }], stage: 0, price };
+      this.draw();
+      return;
+    }
+    this.isDragging = true;
+    this.dragStartX = mx;
+    this.dragStartViewStart = this.viewStart;
+    this.dragState = { lastX: mx, lastT: performance.now(), vels: [] };
+    this.momentum = null;
+  };
+
+  private onTouchMove = (e: TouchEvent) => {
+    const mc = this.canvases['kline-canvas'];
+    if (!mc) return;
+    if (e.touches.length === 2) {
+      const dist = this.touchDist(e);
+      if (this.pinchStartDist > 0) {
+        const ratio = this.pinchStartDist / dist;
+        this.viewBars = Math.max(20, Math.min(240, this.pinchStartBars * ratio));
+        this.clampView();
+        this.draw();
+      }
+      e.preventDefault();
+      return;
+    }
+    if (e.touches.length === 1 && this.draft && this.draft.stage === 0) {
+      const t = e.touches[0];
+      const { bi, price } = this.screenToData(t.clientX, t.clientY);
+      this.draft.pts = [this.draft.pts[0], { bi, price }];
+      this.draw();
+      e.preventDefault();
+      return;
+    }
+    if (e.touches.length !== 1 || !this.isDragging) return;
+    const rect = mc.getBoundingClientRect();
+    const t = e.touches[0];
+    const mx = t.clientX - rect.left;
+    const dx = mx - this.dragStartX;
+    const slot = this.mainW() / this.viewBars;
+    const dBars = -dx / slot;
+    const maxStart = Math.max(0, this.progressCount - this.viewBars);
+    this.viewStart = this.clampSoft(this.dragStartViewStart + dBars, 0, maxStart);
+    this.autoFollow = (this.viewStart + this.viewBars >= this.progressCount);
+    if (this.dragState) {
+      this.dragState.vels.push({ x: mx, t: performance.now() });
+      if (this.dragState.vels.length > 5) this.dragState.vels.shift();
+    }
+    this.computeRanges();
+    this.draw();
+    e.preventDefault();
+  };
+
+  private onTouchEnd = (e: TouchEvent) => {
+    if (this.draft && this.draft.pts.length > 1) {
+      this.drawTools.push({ tool: this.draft.type, p1: this.draft.pts[0], p2: this.draft.pts[1] });
+      this.draft = null;
+      this.saveDrawingsThrottled();
+      this.setActiveTool('cursor');
+    }
+    this.isDragging = false;
+    this.dragState = null;
+    this.pinchStartDist = 0;
   };
 
   private onWheel = (e: WheelEvent) => {
