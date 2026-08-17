@@ -165,7 +165,12 @@ export class ChartEngine {
 
   setReviewMode(on: boolean) {
     this.reviewMode = on;
-    if (on) { this.progressCount = this.bars.length; }
+    if (on) {
+      this.progressCount = this.bars.length;
+      // 定位视口到「训练结束」边界附近，向右展示后续走势（结束节点 → 今天）
+      this.viewStart = Math.max(0, this.trainEndIdx - Math.floor(this.viewBars * 0.6));
+      this.autoFollow = false;
+    }
     this.clampView();
     this.draw();
   }
@@ -336,6 +341,23 @@ export class ChartEngine {
       const x2 = this.xOf(Math.min(this.trainEndIdx, visEnd), xOff);
       ctx.fillStyle = 'rgba(67,97,238,.04)';
       ctx.fillRect(x1, 0, x2 - x1, h);
+    }
+
+    // Review divider: 训练结束边界 → 后续走势（复盘可见，训练时不可见）
+    if (this.reviewMode && this.trainEndIdx > 0 && this.trainEndIdx < this.bars.length) {
+      const x = this.xOf(this.trainEndIdx, xOff);
+      if (x >= 0 && x <= w) {
+        ctx.strokeStyle = 'rgba(245,158,11,.85)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#f59e0b';
+        ctx.font = '10px system-ui';
+        ctx.textAlign = 'left';
+        const label = '训练结束 · 后续走势 →';
+        ctx.fillText(label, Math.min(x + 4, w - label.length * 6 - 4), 12);
+      }
     }
 
     // Candles

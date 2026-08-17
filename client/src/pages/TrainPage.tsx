@@ -14,11 +14,12 @@ import { EventModal } from '../components/EventModal';
 import { ReviewBar } from '../components/ReviewBar';
 import { Toast } from '../components/Toast';
 import type { TrainingState, Drawing, StockData } from '../types';
+import { computeWindowDates } from '../lib/window';
 
-/** 训练窗口长度随周期自适应（日线长、月线短） */
-function totalBarsFor(period: string, barLen: number): number {
-  const base = period === 'monthly' ? 40 : period === 'weekly' ? 90 : 150;
-  return Math.max(20, Math.min(base, barLen - 50));
+/** 以日线全量历史推导「同一时间段」的训练窗口（日/周/月三档共用） */
+function windowFromDaily(daily: StockData | null, fallback: StockData): { start: string; end: string } {
+  if (daily && daily.bars && daily.bars.length >= 200) return computeWindowDates(daily.bars);
+  return computeWindowDates(fallback.bars);
 }
 
 export default function TrainPage() {
@@ -48,27 +49,41 @@ export default function TrainPage() {
     setFinished(false);
     chart.setReviewMode(false);
     try {
-      let data: StockData | null = null;
       if (code) {
-        // 同股票换周期：只按 code 取，绝不偷偷回退到随机新股票
-        data = await StockAPI.byCode(code, p);
+        // 同股票换周期：只按 code 取，绝不偷偷回退到随机新股票；
+        // 训练窗口日期沿用本局已确定的「同一时间段」，仅换分辨率并保留进度
+        const data = await StockAPI.byCode(code, p);
+        if ((data as any).fromCache) {
+          showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
+        }
+        const s = trainer.applyPeriod(data.bars, p);
+        if (!s) {
+          showToast('周期切换失败，已停留在原行情，可稍后重试', 'error');
+        } else {
+          setPeriod(p);
+          setTraining(s);
+          const pLabel = p === 'weekly' ? '周线' : p === 'monthly' ? '月线' : '日线';
+          showToast(`切换至${pLabel}（同一只股票·同一时间段） · ${s.symbol}（${s.code}）`, 'success');
+        }
       } else {
-        // 新一局：随机会换股票（仅训练结束后由「下一盘」触发）
-        data = await StockAPI.random(p);
+        // 新一局：随机选股（仅训练结束后由「下一盘」触发）
+        const data = await StockAPI.random(p);
+        if ((data as any).fromCache) {
+          showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
+        }
+        // 以日线全量历史推导训练窗口的两个边界日期（日/周/月共用，保证时间段一致）
+        let daily: StockData | null = null;
+        try { daily = await StockAPI.byCodeDaily(data.code); } catch { /* 用展示周期兜底 */ }
+        const windowDates = windowFromDaily(daily, data);
+        const s = trainer.startWithMarket(
+          { bars: data.bars, code: data.code, symbol: data.name, startDate: data.bars[0]?.date || '', endDate: data.bars[data.bars.length - 1]?.date, isReal: data.isReal },
+          { capital: wallet.balance, period: p },
+          windowDates
+        );
+        setPeriod(p);
+        setTraining(s);
+        showToast(`新训练开始 · ${s.symbol}（${s.code}）· ${s.isReal ? '真实A股' : '模拟数据'}`, 'success');
       }
-      if ((data as any).fromCache) {
-        showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
-      }
-      const totalBars = totalBarsFor(p, data.bars.length);
-      const s = trainer.startWithMarket(
-        { bars: data.bars, code: data.code, symbol: data.name, startDate: data.bars[0]?.date || '', endDate: data.bars[data.bars.length - 1]?.date, isReal: data.isReal },
-        { capital: wallet.balance, totalBars, period: p }
-      );
-      setPeriod(p);
-      setTraining(s);
-      const pLabel = p === 'weekly' ? '周线' : p === 'monthly' ? '月线' : '日线';
-      const tag = code ? `切换至${pLabel}（同一只股票）` : '新训练开始';
-      showToast(`${tag} · ${s.symbol}（${s.code}）· ${s.isReal ? '真实A股' : '模拟数据'}`, 'success');
     } catch (e: any) {
       if (code) {
         // 同股票意图失败：保留当前训练，不换股票、不切周期
@@ -216,8 +231,11 @@ export default function TrainPage() {
     setReviewMode(true);
     setReplayIdx(null);
     chart.setReviewMode(true);
-    chart.setProgress(training.trainEnd);
     chart.setTradeMarkers(training.trades || [], null);
+    // 复盘：加载训练结束节点之后到今天为止的最新 K 线（数据已拉取，定位到边界处展示）
+    const tail = Math.max(0, training.bars.length - training.trainEnd);
+    const today = training.bars[training.bars.length - 1]?.date || '';
+    showToast(`已加载训练结束后的最新走势（${tail} 根K线，至 ${today}）`, 'success');
   };
 
   const startReplay = () => {
@@ -332,15 +350,23 @@ export default function TrainPage() {
           <ChartPanel ref={chartRef} />
           {/* Stock info */}
           {training && (
-            <div className="mt-1 px-2 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-4 text-sm">
+            <div className="mt-1 px-2 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-4 text-sm flex-wrap">
               <span className="font-bold text-slate-800">{training.symbol}</span>
               <span className="text-slate-400">{training.code}</span>
               <span className={`text-xs px-1.5 py-0.5 rounded ${training.isReal ? 'bg-red-50 text-red-500' : 'bg-slate-50 text-slate-400'}`}>{training.isReal ? '真实A股' : '模拟'}</span>
               <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{training.period === 'weekly' ? '周线' : training.period === 'monthly' ? '月线' : '日线'}</span>
               <span className="text-slate-300">|</span>
-              <span className="text-slate-500">进度 {training.dailyProgress} / {training.dailyTotal}</span>
-              <span className="text-slate-300">|</span>
-              <span className="text-slate-500">{training.trainStartDate} ~ {training.trainEndDate}</span>
+              {reviewMode ? (
+                <span className="text-amber-600 font-medium">复盘模式 · 上市 {training.bars[0]?.date} → 今天 {training.bars[training.bars.length - 1]?.date}（含训练结束后的最新走势）</span>
+              ) : (
+                <>
+                  <span className="text-slate-500">进度 {training.dailyProgress} / {training.dailyTotal}</span>
+                  <span className="text-slate-300">|</span>
+                  <span className="text-slate-500">训练区间 <span className="font-medium text-slate-700">{training.trainStartDate} ~ {training.trainEndDate}</span></span>
+                  <span className="text-slate-300">|</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-brand-50 text-brand-600">日/周/月同一时间段</span>
+                </>
+              )}
             </div>
           )}
         </div>

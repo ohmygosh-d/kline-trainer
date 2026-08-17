@@ -1,29 +1,40 @@
 /**
  * trainer.ts — 训练逻辑 (TypeScript)
  * 管理交易训练会话：买入/卖出/推进K线/结束/统计
+ *
+ * 训练窗口按「日期」锚定：同一个时间段在日/周/月线下完全一致，
+ * 切换周期只是换分辨率，不换股票、不换训练区间。
  */
 
 import type { Bar, Position, Trade, TrainingState, TrainingStats } from '../types';
+import { idxAtOrAfter } from './window';
 
 interface TrainerConfig {
   capital: number;
   fee: number;
-  totalBars: number;
   period: string;
 }
 
 interface InternalState {
   bars: Bar[];
-  rawDailyBars: Bar[] | null;
   symbol: string;
   code: string;
   startDate: string;
   endDate: string | null;
   isReal: boolean;
   period: string;
+  /** 训练窗口的起始日期（含）—— 所有周期共用，保证时间段一致 */
+  windowStart: string;
+  /** 训练窗口的结束日期（含）—— 即后续走势（复盘）的起点 */
+  windowEnd: string;
+  /** 当前周期下，训练第一根K线的下标 */
   trainStart: number;
+  /** 当前周期下，训练区间的结束下标（不含，第一根复盘K线） */
   trainEnd: number;
+  /** 已揭示K线数量（当前周期下标，含） */
   visibleCount: number;
+  /** 当前进度所处的日期（用于跨周期对齐进度） */
+  progressDate: string;
   dailyProgress: number;
   dailyTotal: number;
   cash: number;
@@ -37,7 +48,7 @@ interface InternalState {
 
 export class Trainer {
   private state: InternalState | null = null;
-  private config: TrainerConfig = { capital: 100000, fee: 0.0003, totalBars: 150, period: 'daily' };
+  private config: TrainerConfig = { capital: 100000, fee: 0.0003, period: 'daily' };
   private equityCurve: number[] = [];
   private onFinishCb: ((s: TrainingState) => void) | null = null;
 
@@ -45,26 +56,35 @@ export class Trainer {
   getConfig(): TrainerConfig { return { ...this.config }; }
   onFinish(cb: (s: TrainingState) => void) { this.onFinishCb = cb; }
 
-  startWithMarket(market: { bars: Bar[]; code: string; symbol: string; startDate: string; endDate?: string; isReal: boolean }, cfg?: Partial<TrainerConfig>): TrainingState {
+  /** 新一局：基于「同一时间段」的窗口日期，初始化训练 */
+  startWithMarket(
+    market: { bars: Bar[]; code: string; symbol: string; startDate: string; endDate?: string; isReal: boolean },
+    cfg?: Partial<TrainerConfig>,
+    windowDates?: { start: string; end: string },
+  ): TrainingState {
     if (cfg) Object.assign(this.config, cfg);
     const bars = market.bars;
-    const trainStart = Math.max(0, bars.length - this.config.totalBars - 50);
-    const trainEnd = Math.min(bars.length, trainStart + this.config.totalBars);
+    const dates = windowDates || { start: bars[0]?.date || '', end: bars[bars.length - 1]?.date || '' };
+    const trainStart = idxAtOrAfter(bars, dates.start);
+    let trainEnd = idxAtOrAfter(bars, dates.end);
+    if (trainEnd <= trainStart) trainEnd = Math.min(bars.length, trainStart + 1);
 
     this.state = {
       bars,
-      rawDailyBars: bars,
       symbol: market.symbol,
       code: market.code,
       startDate: market.startDate || bars[0]?.date || '',
       endDate: market.endDate || null,
       isReal: market.isReal,
       period: this.config.period,
+      windowStart: dates.start,
+      windowEnd: dates.end,
       trainStart,
       trainEnd,
-      visibleCount: Math.max(1, trainStart),
+      visibleCount: trainStart, // 开局即可见训练前的全部历史（上市 → 开始节点）
+      progressDate: bars[Math.max(0, Math.min(trainStart, bars.length - 1))]?.date || '',
       dailyProgress: 0,
-      dailyTotal: this.config.totalBars,
+      dailyTotal: trainEnd - trainStart,
       cash: this.config.capital,
       capital: this.config.capital,
       position: null,
@@ -76,6 +96,36 @@ export class Trainer {
     this.equityCurve = [];
     this.recordEquity();
     return this.getState()!;
+  }
+
+  /** 训练进行中切换周期：保持同一只股票、同一时间段，仅换分辨率并保留进度 */
+  applyPeriod(bars: Bar[], period: string): TrainingState | null {
+    if (!this.state) return null;
+    const s = this.state;
+    this.config.period = period;
+    const trainStart = idxAtOrAfter(bars, s.windowStart);
+    let trainEnd = idxAtOrAfter(bars, s.windowEnd);
+    if (trainEnd <= trainStart) trainEnd = Math.min(bars.length, trainStart + 1);
+
+    // 按当前进度日期对齐到新周期的对应K线
+    let visible = idxAtOrAfter(bars, s.progressDate);
+    if (visible > trainEnd) visible = trainEnd;
+    if (visible < trainStart) visible = trainStart;
+
+    s.bars = bars;
+    s.period = period;
+    s.trainStart = trainStart;
+    s.trainEnd = trainEnd;
+    s.visibleCount = visible;
+    s.dailyTotal = trainEnd - trainStart;
+    s.dailyProgress = visible - trainStart;
+    s.progressDate = bars[Math.max(0, Math.min(visible - 1, bars.length - 1))]?.date || s.progressDate;
+    return this.getState();
+  }
+
+  getWindowDates(): { start: string; end: string } | null {
+    if (!this.state) return null;
+    return { start: this.state.windowStart, end: this.state.windowEnd };
   }
 
   private currentBar(): Bar | null {
@@ -131,9 +181,10 @@ export class Trainer {
     if (!this.state || this.state.finished) return this.getState();
     if (this.state.visibleCount >= this.state.trainEnd) { this.finish(); return this.getState(); }
     this.state.visibleCount++;
+    this.state.progressDate = this.currentBar()?.date || this.state.progressDate;
     this.state.dailyProgress = this.state.visibleCount - this.state.trainStart;
     this.recordEquity();
-    if (this.state.dailyProgress >= this.state.dailyTotal || this.state.visibleCount >= this.state.trainEnd) {
+    if (this.state.visibleCount >= this.state.trainEnd) {
       this.finish();
     }
     return this.getState();
@@ -165,8 +216,6 @@ export class Trainer {
     const price = this.currentPrice();
     const posVal = pos ? pos.qty * price : 0;
     const equity = this.state.cash + posVal;
-    const trainStartDate = this.state.bars[this.state.trainStart]?.date || '';
-    const trainEndDate = this.state.bars[Math.min(this.state.trainEnd - 1, this.state.bars.length - 1)]?.date || '';
 
     return {
       bars: this.state.bars,
@@ -183,8 +232,9 @@ export class Trainer {
       dailyProgress: this.state.dailyProgress,
       dailyTotal: this.state.dailyTotal,
       startDate: this.state.startDate,
-      trainStartDate,
-      trainEndDate,
+      // 关键：训练区间日期在所有周期下完全一致
+      trainStartDate: this.state.windowStart,
+      trainEndDate: this.state.windowEnd,
       pnl: equity - this.state.capital,
       equity,
       _autoSold: this.state._autoSold,

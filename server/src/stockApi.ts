@@ -96,6 +96,16 @@ const UNIQUE_POOL = Array.from(new Map(STOCK_POOL.map(s => [s.code, s])).values(
 
 let lastServedCode = '';
 
+/**
+ * 每个周期一次性拉取的 K 线根数：尽量覆盖「上市至今」，
+ * 这样训练时能看到开始节点前的全部历史，复盘时能看到结束节点后到今天的最新走势。
+ */
+function countForPeriod(period: string): number {
+  if (period === 'monthly') return 320;
+  if (period === 'weekly') return 520;
+  return 2200; // 日线：约 9 年，覆盖大多数老股上市至今
+}
+
 function httpsGet(url: string, timeoutMs = 8000): Promise<string> {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { timeout: timeoutMs }, (res) => {
@@ -193,8 +203,8 @@ async function fetchByPeriod(code: string, period: string, count: number): Promi
   const ktype = period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'day';
   let bars = await fetchTencentBars(code, count, ktype);
   if (bars && bars.length >= 50) return bars;
-  // 新浪日线 → 聚合
-  const sinaDaily = await fetchSinaBars(code, 320);
+  // 新浪日线 → 聚合（同样拉足量以保证历史深度）
+  const sinaDaily = await fetchSinaBars(code, count);
   if (sinaDaily && sinaDaily.length >= 50) {
     const agg = aggregateBars(sinaDaily, period);
     if (agg) return agg;
@@ -238,14 +248,15 @@ function getStockName(code: string): string {
 }
 
 export async function getRandomStockData(period = 'daily', minBars = 0): Promise<StockData | null> {
-  if (minBars <= 0) minBars = period === 'monthly' ? 80 : period === 'weekly' ? 150 : 250;
+  if (minBars <= 0) minBars = period === 'monthly' ? 80 : period === 'weekly' ? 200 : 400;
+  const count = countForPeriod(period);
   const candidates = UNIQUE_POOL.filter(s => s.code !== lastServedCode);
   const pool = candidates.length > 0 ? candidates : UNIQUE_POOL;
   // 随机打乱取前 15 只尝试
   const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 15);
 
   for (const stock of shuffled) {
-    const bars = await fetchByPeriod(stock.code, period, 320);
+    const bars = await fetchByPeriod(stock.code, period, count);
     if (bars && bars.length >= minBars) {
       lastServedCode = stock.code;
       return { code: stock.code, name: stock.name, bars, isReal: true };
@@ -254,7 +265,7 @@ export async function getRandomStockData(period = 'daily', minBars = 0): Promise
 
   // 放宽条件：50 根也行（含本地聚合兜底）
   for (const stock of shuffled) {
-    const bars = await fetchByPeriod(stock.code, period, 320);
+    const bars = await fetchByPeriod(stock.code, period, count);
     if (bars && bars.length >= 50) {
       lastServedCode = stock.code;
       return { code: stock.code, name: stock.name, bars, isReal: true };
@@ -274,7 +285,8 @@ export async function getRandomStockData(period = 'daily', minBars = 0): Promise
 
 /** 指定股票 + 周期，用于「同股票切换周期」 */
 export async function getStockDataByCode(code: string, period = 'daily'): Promise<StockData | null> {
-  const bars = await fetchByPeriod(code, period, 320);
+  const count = countForPeriod(period);
+  const bars = await fetchByPeriod(code, period, count);
   if (bars && bars.length >= 40) {
     return { code, name: getStockName(code), bars, isReal: true };
   }

@@ -66,7 +66,7 @@ export const AuthAPI = {
   },
 };
 
-// 股票数据前端缓存 + 失败重试降级（按周期分别缓存）
+// 股票数据前端缓存 + 失败重试降级（按 code+周期 分别缓存，避免不同股票互相覆盖）
 const STOCK_CACHE_KEY = 'kt_stock_cache';
 const stockCache: Record<string, StockData> = {};
 try {
@@ -74,12 +74,12 @@ try {
   if (cached) Object.assign(stockCache, JSON.parse(cached));
 } catch { /* ignore */ }
 
-async function fetchStock(url: string, period: string): Promise<StockData> {
+async function fetchStock(url: string, cacheKey: string): Promise<StockData> {
   let lastErr: any = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const { data } = await api.get(url);
-      stockCache[period] = data;
+      stockCache[cacheKey] = data;
       try { localStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(stockCache)); } catch { /* ignore */ }
       return data;
     } catch (e) {
@@ -87,13 +87,15 @@ async function fetchStock(url: string, period: string): Promise<StockData> {
       if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
   }
-  if (stockCache[period]) return { ...stockCache[period], fromCache: true };
+  if (stockCache[cacheKey]) return { ...stockCache[cacheKey], fromCache: true };
   throw lastErr;
 }
 
 export const StockAPI = {
-  random: (period = 'daily'): Promise<StockData> => fetchStock(`/stock/random?period=${period}`, period),
-  byCode: (code: string, period = 'daily'): Promise<StockData> => fetchStock(`/stock/bycode?code=${encodeURIComponent(code)}&period=${period}`, period),
+  random: (period = 'daily'): Promise<StockData> => fetchStock(`/stock/random?period=${period}`, `random_${period}`),
+  // 取日线（用于推导「同一时间段」的训练窗口，按 code 单独缓存）
+  byCodeDaily: (code: string): Promise<StockData> => fetchStock(`/stock/bycode?code=${encodeURIComponent(code)}&period=daily`, `bycode_${code}_daily`),
+  byCode: (code: string, period = 'daily'): Promise<StockData> => fetchStock(`/stock/bycode?code=${encodeURIComponent(code)}&period=${period}`, `bycode_${code}_${period}`),
 };
 
 const WALLET_CACHE_KEY = 'kt_wallet_cache';
