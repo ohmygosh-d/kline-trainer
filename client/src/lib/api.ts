@@ -66,31 +66,34 @@ export const AuthAPI = {
   },
 };
 
-// 股票数据前端缓存 + 失败重试降级
+// 股票数据前端缓存 + 失败重试降级（按周期分别缓存）
 const STOCK_CACHE_KEY = 'kt_stock_cache';
-let lastStockCache: StockData | null = null;
+const stockCache: Record<string, StockData> = {};
 try {
   const cached = localStorage.getItem(STOCK_CACHE_KEY);
-  if (cached) lastStockCache = JSON.parse(cached);
+  if (cached) Object.assign(stockCache, JSON.parse(cached));
 } catch { /* ignore */ }
 
-export const StockAPI = {
-  random: async (): Promise<StockData> => {
-    let lastErr: any = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const { data } = await api.get('/stock/random');
-        lastStockCache = data;
-        try { localStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(data)); } catch { /* ignore */ }
-        return data;
-      } catch (e) {
-        lastErr = e;
-        if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-      }
+async function fetchStock(url: string, period: string): Promise<StockData> {
+  let lastErr: any = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const { data } = await api.get(url);
+      stockCache[period] = data;
+      try { localStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(stockCache)); } catch { /* ignore */ }
+      return data;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
-    if (lastStockCache) return { ...lastStockCache, fromCache: true };
-    throw lastErr;
-  },
+  }
+  if (stockCache[period]) return { ...stockCache[period], fromCache: true };
+  throw lastErr;
+}
+
+export const StockAPI = {
+  random: (period = 'daily'): Promise<StockData> => fetchStock(`/stock/random?period=${period}`, period),
+  byCode: (code: string, period = 'daily'): Promise<StockData> => fetchStock(`/stock/bycode?code=${encodeURIComponent(code)}&period=${period}`, period),
 };
 
 const WALLET_CACHE_KEY = 'kt_wallet_cache';

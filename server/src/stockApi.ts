@@ -127,12 +127,12 @@ async function fetchSinaBars(code: string, datalen: number): Promise<Bar[] | nul
   }
 }
 
-async function fetchTencentBars(code: string, count: number): Promise<Bar[] | null> {
+async function fetchTencentBars(code: string, count: number, ktype = 'day'): Promise<Bar[] | null> {
   try {
-    const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,,,${count},qfq`;
+    const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${ktype},,,${count},qfq`;
     const raw = await httpsGet(url);
     const json = JSON.parse(raw);
-    const dayArr = json?.data?.[code]?.['qfqday'] || json?.data?.[code]?.['day'];
+    const dayArr = json?.data?.[code]?.['qfq' + ktype] || json?.data?.[code]?.[ktype] || json?.data?.[code]?.['qfqday'] || json?.data?.[code]?.['day'];
     if (!Array.isArray(dayArr) || dayArr.length === 0) return null;
     return dayArr.map((b: any[]) => ({
       date: b[0],
@@ -145,6 +145,69 @@ async function fetchTencentBars(code: string, count: number): Promise<Bar[] | nu
   } catch {
     return null;
   }
+}
+
+/**
+ * 把日线聚合为周线/月线（本地兜底用）
+ * 周线按 ISO 周分组、月线按自然月分组；每根 K 取组内首开/末收/极值/量合计
+ */
+function aggregateBars(daily: Bar[], period: string): Bar[] | null {
+  if (period === 'daily' || !daily || daily.length === 0) return daily;
+  const buckets: Bar[] = [];
+  const map = new Map<string, Bar[]>();
+  for (const b of daily) {
+    let key: string;
+    if (period === 'monthly') {
+      key = b.date.slice(0, 7);
+    } else {
+      // weekly: Monday of the bar's ISO week
+      const d = new Date(b.date + 'T00:00:00Z');
+      const dow = d.getUTCDay() || 7; // 周日=7
+      const monday = new Date(d);
+      monday.setUTCDate(d.getUTCDate() - dow + 1);
+      const y = monday.getUTCFullYear();
+      const startOfYear = new Date(Date.UTC(y, 0, 1));
+      const week = Math.ceil((((monday.getTime() - startOfYear.getTime()) / 86400000) + 1) / 7);
+      key = `${y}-W${week}`;
+    }
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(b);
+  }
+  for (const arr of map.values()) {
+    buckets.push({
+      date: arr[arr.length - 1].date,
+      open: arr[0].open,
+      close: arr[arr.length - 1].close,
+      high: Math.max(...arr.map(x => x.high)),
+      low: Math.min(...arr.map(x => x.low)),
+      volume: arr.reduce((s, x) => s + x.volume, 0),
+    });
+  }
+  return buckets.length >= 2 ? buckets : null;
+}
+
+/**
+ * 按周期拉数据：腾讯(day/week/month) 优先，失败则新浪日线聚合，再本地日线聚合
+ */
+async function fetchByPeriod(code: string, period: string, count: number): Promise<Bar[] | null> {
+  const ktype = period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'day';
+  let bars = await fetchTencentBars(code, count, ktype);
+  if (bars && bars.length >= 50) return bars;
+  // 新浪日线 → 聚合
+  const sinaDaily = await fetchSinaBars(code, 320);
+  if (sinaDaily && sinaDaily.length >= 50) {
+    const agg = aggregateBars(sinaDaily, period);
+    if (agg) return agg;
+  }
+  // 本地日线 → 聚合
+  const local = loadLocalBars(code);
+  if (local && local.length >= 50) {
+    const agg = aggregateBars(local, period);
+    if (agg) return agg;
+  }
+  // 腾讯拿到少量也先用着
+  if (bars && bars.length > 0) return bars;
+  return null;
 }
 
 function loadLocalBars(code: string): Bar[] | null {
@@ -174,44 +237,54 @@ function getStockName(code: string): string {
   return found?.name || code;
 }
 
-export async function getRandomStockData(minBars = 250): Promise<StockData | null> {
+export async function getRandomStockData(period = 'daily', minBars = 0): Promise<StockData | null> {
+  if (minBars <= 0) minBars = period === 'monthly' ? 80 : period === 'weekly' ? 150 : 250;
   const candidates = UNIQUE_POOL.filter(s => s.code !== lastServedCode);
   const pool = candidates.length > 0 ? candidates : UNIQUE_POOL;
   // 随机打乱取前 15 只尝试
   const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 15);
 
   for (const stock of shuffled) {
-    // 新浪 → 腾讯 → 本地
-    let bars = await fetchSinaBars(stock.code, 320);
-    if (!bars || bars.length < minBars) {
-      bars = await fetchTencentBars(stock.code, 320);
-    }
-    if (!bars || bars.length < minBars) {
-      const local = loadLocalBars(stock.code);
-      if (local && local.length >= 100) {
-        bars = local;
-      }
-    }
+    const bars = await fetchByPeriod(stock.code, period, 320);
     if (bars && bars.length >= minBars) {
       lastServedCode = stock.code;
       return { code: stock.code, name: stock.name, bars, isReal: true };
     }
   }
 
-  // 放宽条件：100 根也行
+  // 放宽条件：50 根也行（含本地聚合兜底）
   for (const stock of shuffled) {
-    let bars = await fetchSinaBars(stock.code, 320);
-    if (bars && bars.length >= 100) {
+    const bars = await fetchByPeriod(stock.code, period, 320);
+    if (bars && bars.length >= 50) {
       lastServedCode = stock.code;
       return { code: stock.code, name: stock.name, bars, isReal: true };
     }
     const local = loadLocalBars(stock.code);
-    if (local && local.length >= 100) {
-      lastServedCode = stock.code;
-      return { code: stock.code, name: stock.name, bars: local, isReal: false };
+    if (local) {
+      const agg = aggregateBars(local, period);
+      if (agg && agg.length >= 50) {
+        lastServedCode = stock.code;
+        return { code: stock.code, name: stock.name, bars: agg, isReal: false };
+      }
     }
   }
 
+  return null;
+}
+
+/** 指定股票 + 周期，用于「同股票切换周期」 */
+export async function getStockDataByCode(code: string, period = 'daily'): Promise<StockData | null> {
+  const bars = await fetchByPeriod(code, period, 320);
+  if (bars && bars.length >= 40) {
+    return { code, name: getStockName(code), bars, isReal: true };
+  }
+  const local = loadLocalBars(code);
+  if (local) {
+    const agg = aggregateBars(local, period);
+    if (agg && agg.length >= 40) {
+      return { code, name: getStockName(code), bars: agg, isReal: false };
+    }
+  }
   return null;
 }
 

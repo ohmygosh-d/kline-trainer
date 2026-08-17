@@ -13,7 +13,13 @@ import { ResultModal } from '../components/ResultModal';
 import { EventModal } from '../components/EventModal';
 import { ReviewBar } from '../components/ReviewBar';
 import { Toast } from '../components/Toast';
-import type { TrainingState, Drawing } from '../types';
+import type { TrainingState, Drawing, StockData } from '../types';
+
+/** 训练窗口长度随周期自适应（日线长、月线短） */
+function totalBarsFor(period: string, barLen: number): number {
+  const base = period === 'monthly' ? 40 : period === 'weekly' ? 90 : 150;
+  return Math.max(20, Math.min(base, barLen - 50));
+}
 
 export default function TrainPage() {
   const { user, wallet: ws, training, setTraining, showToast, finishTraining, syncWallet, logout } = useStore();
@@ -26,8 +32,14 @@ export default function TrainPage() {
   const [replayIdx, setReplayIdx] = useState<number | null>(null);
   const [indicators, setIndicators] = useState({ ma: true, vol: true, macd: false, kdj: false, rsi: false, boll: false });
   const [finished, setFinished] = useState(false);
+  const INIT_PERIOD = (() => {
+    const p = new URLSearchParams(location.search).get('period');
+    return p === 'weekly' || p === 'monthly' ? p : 'daily';
+  })();
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>(INIT_PERIOD);
 
-  const newSession = useCallback(async () => {
+  // 开局：p=周期；code=指定股票（同股票换周期）。无 code 时为「新一局」（随机选股，仅训练结束后触发）
+  const startNew = useCallback(async (p: 'daily' | 'weekly' | 'monthly', code?: string) => {
     setLoading(true);
     setShowResult(false);
     setShowEvent(false);
@@ -36,22 +48,50 @@ export default function TrainPage() {
     setFinished(false);
     chart.setReviewMode(false);
     try {
-      const data = await StockAPI.random();
+      let data: StockData | null = null;
+      if (code) {
+        // 同股票换周期：只按 code 取，绝不偷偷回退到随机新股票
+        data = await StockAPI.byCode(code, p);
+      } else {
+        // 新一局：随机会换股票（仅训练结束后由「下一盘」触发）
+        data = await StockAPI.random(p);
+      }
       if ((data as any).fromCache) {
         showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
       }
+      const totalBars = totalBarsFor(p, data.bars.length);
       const s = trainer.startWithMarket(
         { bars: data.bars, code: data.code, symbol: data.name, startDate: data.bars[0]?.date || '', endDate: data.bars[data.bars.length - 1]?.date, isReal: data.isReal },
-        { capital: wallet.balance, totalBars: 150, period: 'daily' }
+        { capital: wallet.balance, totalBars, period: p }
       );
+      setPeriod(p);
       setTraining(s);
-      showToast(`新训练开始 · ${s.symbol}（${s.code}）· ${s.isReal ? '真实A股' : '模拟数据'}`, 'success');
+      const pLabel = p === 'weekly' ? '周线' : p === 'monthly' ? '月线' : '日线';
+      const tag = code ? `切换至${pLabel}（同一只股票）` : '新训练开始';
+      showToast(`${tag} · ${s.symbol}（${s.code}）· ${s.isReal ? '真实A股' : '模拟数据'}`, 'success');
     } catch (e: any) {
-      showToast(e.response?.data?.error || '数据加载失败', 'error');
+      if (code) {
+        // 同股票意图失败：保留当前训练，不换股票、不切周期
+        showToast('该股票此周期数据获取失败，已停留在原行情，可稍后重试', 'error');
+      } else {
+        showToast(e?.response?.data?.error || '数据加载失败', 'error');
+      }
     } finally {
       setLoading(false);
     }
-  }, [setTraining, showToast]);
+  }, [period, setTraining, showToast]);
+
+  // 新一局（训练结束后「下一盘」）：随机选股 → 会换股票（这是唯一换股票的地方）
+  const newSession = useCallback(() => {
+    startNew(period);
+  }, [period, startNew]);
+
+  // 日/周/月线切换：保持同一只股票换周期；训练结束前绝不更换股票
+  const switchPeriod = (p: 'daily' | 'weekly' | 'monthly') => {
+    if (!training || finished) return;
+    if (p === training.period) return;
+    startNew(p, training.code);
+  };
 
   // Chart drawing persistence callbacks
   useEffect(() => {
@@ -77,8 +117,8 @@ export default function TrainPage() {
   useEffect(() => {
     if (!training || !chartRef.current) return;
     chart.init(chartRef.current);
-    chart.setData(training.bars, training.trainStart, training.trainEnd);
-    chart.setDrawingContext(`${training.code}_daily`);
+    chart.setData(training.bars, training.trainStart, training.trainEnd, training.period);
+    chart.setDrawingContext(`${training.code}_${training.period}`);
     chart.setActiveTool('cursor');
     chart.setProgress(training.visibleCount);
     chart.setTradeMarkers(training.trades || [], training.position);
@@ -258,8 +298,20 @@ export default function TrainPage() {
         {/* Chart area */}
         <div className="flex-1 flex flex-col p-2 min-h-0">
           {/* Toolbar */}
-          <div className="flex items-center gap-2 mb-1 px-1">
+          <div className="flex items-center gap-2 mb-1 px-1 flex-wrap">
             <DrawToolbar />
+            {/* 周期切换：日线 / 周线 / 月线 —— 训练结束前切换只换周期、不换股票 */}
+            <div className="flex items-center gap-1 mr-1">
+              {(['daily', 'weekly', 'monthly'] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => switchPeriod(p)}
+                  disabled={finished}
+                  title={finished ? '训练已结束，点击「下一盘」换一只股票' : '切换周期（同一只股票）'}
+                  className={`px-2 py-1 rounded text-xs font-medium transition ${period === p ? 'bg-brand-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:text-slate-600'} ${finished ? 'opacity-40 cursor-not-allowed hover:text-slate-400' : ''}`}
+                >{p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}</button>
+              ))}
+            </div>
             <div className="flex-1" />
             <div className="flex items-center gap-1">
               <button onClick={() => chart.zoomBy(0.87)} className="px-2 py-1 bg-white border border-slate-200 rounded text-sm hover:bg-slate-50">−</button>
@@ -284,6 +336,7 @@ export default function TrainPage() {
               <span className="font-bold text-slate-800">{training.symbol}</span>
               <span className="text-slate-400">{training.code}</span>
               <span className={`text-xs px-1.5 py-0.5 rounded ${training.isReal ? 'bg-red-50 text-red-500' : 'bg-slate-50 text-slate-400'}`}>{training.isReal ? '真实A股' : '模拟'}</span>
+              <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{training.period === 'weekly' ? '周线' : training.period === 'monthly' ? '月线' : '日线'}</span>
               <span className="text-slate-300">|</span>
               <span className="text-slate-500">进度 {training.dailyProgress} / {training.dailyTotal}</span>
               <span className="text-slate-300">|</span>

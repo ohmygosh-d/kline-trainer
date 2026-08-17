@@ -58,6 +58,7 @@ export class ChartEngine {
   private viewStart = 0;
   private viewBars = 60;
   private autoFollow = true;
+  private period: string = 'daily';
 
   private opts = { showMA: true, showVol: true, showMACD: false, showKDJ: false, showRSI: false, showBOLL: false, maPeriods: [5, 10, 20] };
   private maData: (number | null)[][] = [];
@@ -137,7 +138,8 @@ export class ChartEngine {
     }
   }
 
-  setData(bars: Bar[], trainStart: number, trainEnd: number) {
+  setData(bars: Bar[], trainStart: number, trainEnd: number, period?: string) {
+    if (period) this.period = period;
     this.bars = bars;
     this.trainStartIdx = trainStart;
     this.trainEndIdx = trainEnd;
@@ -428,13 +430,18 @@ export class ChartEngine {
       ctx.fillText(price.toFixed(2), w - 4, (h / 4) * i + 12);
     }
 
-    // Date labels
+    // Date labels (按周期格式化)
     ctx.textAlign = 'center';
     const labelStep = Math.max(1, Math.floor(this.viewBars / 8));
+    const fmtDate = (d: string): string => {
+      if (this.period === 'monthly') return d.slice(0, 7);      // YYYY-MM
+      if (this.period === 'weekly') return d.slice(2, 7);        // YY-MM
+      return d.slice(5);                                         // MM-DD
+    };
     for (let i = visStart; i < visEnd; i += labelStep) {
       if (i < this.bars.length) {
         const x = this.xOf(i, xOff);
-        ctx.fillText(this.bars[i].date.slice(5), x, h - 4);
+        ctx.fillText(fmtDate(this.bars[i].date), x, h - 4);
       }
     }
   }

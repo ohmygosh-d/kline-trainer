@@ -1,6 +1,9 @@
 # Node
 node_modules/
 dist/
+_old_dist/
+_old_dist_bak/
+_cleanup/
 *.db
 *.db-journal
 *.db-wal
