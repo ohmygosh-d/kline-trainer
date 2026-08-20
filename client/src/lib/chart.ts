@@ -99,6 +99,9 @@ export class ChartEngine {
   private animRAF: number | null = null;
   private initialized = false;
 
+  // 指标行容器（用于按需显隐并重排主图高度）
+  private rowEls: Record<string, HTMLElement | null> = {};
+
   // Touch state (mobile)
   private pinchStartDist = 0;
   private pinchStartBars = 60;
@@ -117,25 +120,46 @@ export class ChartEngine {
       if (el) {
         this.canvases[id] = el;
         this.ctxs[id] = el.getContext('2d')!;
+        // 记录指标行容器，便于按开关显隐并重排主图高度
+        if (id === 'vol-canvas' || id === 'macd-canvas' || id === 'kdj-canvas' || id === 'rsi-canvas') {
+          this.rowEls[id] = el.closest('[data-row]') as HTMLElement | null;
+        }
       }
     }
-    this.setupCanvas();
     this.bindEvents();
+    this.applyLayout();
   }
 
+  /** 每个 canvas 按其自身区块尺寸设置，而不是用容器全尺寸（修复成交量/指标被撑满整屏） */
   setupCanvas() {
-    const rect = this.container.getBoundingClientRect();
-    const w = rect.width;
-    const h = rect.height;
     this.dpr = window.devicePixelRatio || 1;
     for (const id in this.canvases) {
       const c = this.canvases[id];
-      c.width = w * this.dpr;
-      c.height = h * this.dpr;
+      const rect = c.getBoundingClientRect();
+      if (!rect.width || !rect.height) continue; // 隐藏的指标行跳过
+      const w = rect.width, h = rect.height;
+      c.width = Math.round(w * this.dpr);
+      c.height = Math.round(h * this.dpr);
       c.style.width = w + 'px';
       c.style.height = h + 'px';
-      this.ctxs[id].scale(this.dpr, this.dpr);
+      this.ctxs[id].setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     }
+  }
+
+  /** 按开关显隐指标行 → 重排 canvas 尺寸 → 重绘 */
+  applyLayout() {
+    const vis: Record<string, boolean> = {
+      'vol-canvas': this.opts.showVol,
+      'macd-canvas': this.opts.showMACD,
+      'kdj-canvas': this.opts.showKDJ,
+      'rsi-canvas': this.opts.showRSI,
+    };
+    for (const id in vis) {
+      const row = this.rowEls[id];
+      if (row) row.style.display = vis[id] ? '' : 'none';
+    }
+    this.setupCanvas();
+    this.draw();
   }
 
   setData(bars: Bar[], trainStart: number, trainEnd: number, period?: string) {
@@ -477,6 +501,15 @@ export class ChartEngine {
     ctx.clearRect(0, 0, w, h);
     if (!this.opts.showVol) return;
 
+    // baseline + 标签
+    ctx.strokeStyle = COLOR.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, h - 0.5); ctx.lineTo(w, h - 0.5); ctx.stroke();
+    ctx.fillStyle = COLOR.textDim;
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('VOL', 6, 12);
+
     const { visStart, visEnd, xOff } = this.getView();
     const slot = w / this.viewBars;
     const cw = slot * 0.7;
@@ -485,8 +518,8 @@ export class ChartEngine {
       const b = this.bars[i];
       const x = this.xOf(i, xOff);
       const isUp = b.close >= b.open;
-      const vh = (b.volume / this.volMax) * h * 0.85;
-      ctx.fillStyle = isUp ? 'rgba(239,68,68,.6)' : 'rgba(34,197,94,.6)';
+      const vh = (b.volume / this.volMax) * h * 0.82;
+      ctx.fillStyle = isUp ? 'rgba(239,68,68,.55)' : 'rgba(34,197,94,.55)';
       ctx.fillRect(x - cw / 2, h - vh, cw, vh);
     }
   }
@@ -499,6 +532,10 @@ export class ChartEngine {
     const h = canvas ? canvas.height / this.dpr : 0;
     ctx.clearRect(0, 0, w, h);
     const { visStart, visEnd, xOff } = this.getView();
+    ctx.fillStyle = COLOR.textDim;
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('MACD(12,26,9)', 6, 12);
     const hist = this.macdData.hist;
     const all = [...hist, ...this.macdData.dif, ...this.macdData.dea];
     const vmin = Math.min(...all), vmax = Math.max(...all);
@@ -536,6 +573,10 @@ export class ChartEngine {
     const h = canvas ? canvas.height / this.dpr : 0;
     ctx.clearRect(0, 0, w, h);
     const { visStart, visEnd, xOff } = this.getView();
+    ctx.fillStyle = COLOR.textDim;
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('KDJ(9,3,3)', 6, 12);
     const drawLine = (arr: number[], color: string) => {
       ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath();
       let started = false;
@@ -559,6 +600,10 @@ export class ChartEngine {
     const h = canvas ? canvas.height / this.dpr : 0;
     ctx.clearRect(0, 0, w, h);
     const { visStart, visEnd, xOff } = this.getView();
+    ctx.fillStyle = COLOR.textDim;
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('RSI(6)', 6, 12);
     ctx.strokeStyle = COLOR.rsi; ctx.lineWidth = 1; ctx.beginPath();
     let started = false;
     for (let i = visStart; i < visEnd && i < this.rsiData.length; i++) {
@@ -1160,10 +1205,10 @@ export class ChartEngine {
 
   // Toggle indicators
   toggleMA(v?: boolean) { this.opts.showMA = v ?? !this.opts.showMA; this.draw(); }
-  toggleVol(v?: boolean) { this.opts.showVol = v ?? !this.opts.showVol; this.draw(); }
-  toggleMACD(v?: boolean) { this.opts.showMACD = v ?? !this.opts.showMACD; this.draw(); }
-  toggleKDJ(v?: boolean) { this.opts.showKDJ = v ?? !this.opts.showKDJ; this.draw(); }
-  toggleRSI(v?: boolean) { this.opts.showRSI = v ?? !this.opts.showRSI; this.draw(); }
+  toggleVol(v?: boolean) { this.opts.showVol = v ?? !this.opts.showVol; this.applyLayout(); }
+  toggleMACD(v?: boolean) { this.opts.showMACD = v ?? !this.opts.showMACD; this.applyLayout(); }
+  toggleKDJ(v?: boolean) { this.opts.showKDJ = v ?? !this.opts.showKDJ; this.applyLayout(); }
+  toggleRSI(v?: boolean) { this.opts.showRSI = v ?? !this.opts.showRSI; this.applyLayout(); }
   toggleBOLL(v?: boolean) { this.opts.showBOLL = v ?? !this.opts.showBOLL; this.draw(); }
 
   getOpts() { return this.opts; }

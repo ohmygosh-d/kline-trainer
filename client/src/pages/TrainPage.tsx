@@ -326,7 +326,7 @@ export default function TrainPage() {
                   onClick={() => switchPeriod(p)}
                   disabled={finished}
                   title={finished ? '训练已结束，点击「下一盘」换一只股票' : '切换周期（同一只股票）'}
-                  className={`px-2 py-1 rounded text-xs font-medium transition ${period === p ? 'bg-brand-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:text-slate-600'} ${finished ? 'opacity-40 cursor-not-allowed hover:text-slate-400' : ''}`}
+                  className={`px-2.5 py-1.5 rounded-lg text-sm font-medium transition ${period === p ? 'bg-brand-500 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-400 hover:text-slate-600'} ${finished ? 'opacity-40 cursor-not-allowed hover:text-slate-400' : ''}`}
                 >{p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}</button>
               ))}
             </div>
@@ -350,7 +350,7 @@ export default function TrainPage() {
           <ChartPanel ref={chartRef} />
           {/* Stock info */}
           {training && (
-            <div className="mt-1 px-2 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-4 text-sm flex-wrap">
+            <div className="mt-1 px-3 py-2 bg-white border border-slate-200 rounded-xl shadow-sm flex items-center gap-4 text-sm flex-wrap">
               <span className="font-bold text-slate-800">{training.symbol}</span>
               <span className="text-slate-400">{training.code}</span>
               <span className={`text-xs px-1.5 py-0.5 rounded ${training.isReal ? 'bg-red-50 text-red-500' : 'bg-slate-50 text-slate-400'}`}>{training.isReal ? '真实A股' : '模拟'}</span>
