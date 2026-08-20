@@ -46,7 +46,7 @@ export function TradePanel({ training, finished, onBuy, onSell, onNext, onFinish
   );
 
   return (
-    <aside className="w-full md:w-80 h-[44vh] md:h-auto bg-white border-t md:border-t-0 md:border-l border-slate-200 flex flex-col overflow-hidden">
+    <aside className="w-full md:w-80 h-[44vh] md:h-full bg-white border-t md:border-t-0 md:border-l border-slate-200 flex flex-col overflow-hidden">
       {/* 最新价 hero */}
       <div className="px-4 pt-3 pb-3 border-b border-slate-100 bg-gradient-to-b from-slate-50 to-white">
         <div className="flex items-center justify-between mb-0.5">

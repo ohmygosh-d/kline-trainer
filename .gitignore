@@ -3,6 +3,8 @@ node_modules/
 dist/
 _old_dist/
 _old_dist_bak/
+_old_dist_*/
+_verify_final.png
 _cleanup/
 *.db
 *.db-journal

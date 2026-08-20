@@ -312,9 +312,9 @@ export default function TrainPage() {
       </header>
 
       {/* Main layout */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-[1fr_320px] min-h-0 overflow-hidden">
         {/* Chart area */}
-        <div className="flex-1 flex flex-col p-2 min-h-0">
+        <div className="flex flex-col p-2 min-h-0 overflow-hidden">
           {/* Toolbar */}
           <div className="flex items-center gap-2 mb-1 px-1 flex-wrap">
             <DrawToolbar />

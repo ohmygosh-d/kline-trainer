@@ -15,14 +15,14 @@ const COLOR = {
   kdj: { k: '#f59e0b', d: '#3b82f6', j: '#f97316' },
   rsi: '#8b5cf6',
   macd: { dif: '#3b82f6', dea: '#f59e0b' },
-  grid: 'rgba(0,0,0,.06)',
-  gridStrong: 'rgba(0,0,0,.1)',
+  grid: 'rgba(0,0,0,.10)',
+  gridStrong: 'rgba(0,0,0,.16)',
   text: '#94a3b8',
-  textDim: '#94a3b8',
+  textDim: '#64748b',
   textBright: '#334155',
-  cross: 'rgba(148,163,184,.5)',
+  cross: 'rgba(148,163,184,.6)',
   zoneBg: 'rgba(0,0,0,.02)',
-  bg: '#f8fafc',
+  bg: '#ffffff',
 };
 
 const DRAW_TOOLS_CFG: Record<string, { label: string; color: string; hint: string }> = {
@@ -101,6 +101,9 @@ export class ChartEngine {
 
   // 指标行容器（用于按需显隐并重排主图高度）
   private rowEls: Record<string, HTMLElement | null> = {};
+  private mainEl: HTMLElement | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeTimer: any = null;
 
   // Touch state (mobile)
   private pinchStartDist = 0;
@@ -124,10 +127,31 @@ export class ChartEngine {
         if (id === 'vol-canvas' || id === 'macd-canvas' || id === 'kdj-canvas' || id === 'rsi-canvas') {
           this.rowEls[id] = el.closest('[data-row]') as HTMLElement | null;
         }
+        if (id === 'kline-canvas') {
+          this.mainEl = el.parentElement as HTMLElement | null;
+        }
       }
     }
+    this.bindResize();
     this.bindEvents();
     this.applyLayout();
+  }
+
+  private bindResize() {
+    if (typeof ResizeObserver === 'undefined') return;
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.resizeTimer) clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => {
+        this.setupCanvas();
+        this.draw();
+      }, 50);
+    });
+    if (this.container) this.resizeObserver.observe(this.container);
+    if (this.mainEl) this.resizeObserver.observe(this.mainEl);
+    for (const id in this.rowEls) {
+      const el = this.rowEls[id];
+      if (el) this.resizeObserver.observe(el);
+    }
   }
 
   /** 每个 canvas 按其自身区块尺寸设置，而不是用容器全尺寸（修复成交量/指标被撑满整屏） */
@@ -1216,3 +1240,4 @@ export class ChartEngine {
 
 // Singleton
 export const chart = new ChartEngine();
+if (typeof window !== 'undefined') (window as any).__chart = chart;
