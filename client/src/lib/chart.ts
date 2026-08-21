@@ -705,6 +705,7 @@ export class ChartEngine {
     const w = this.mainW();
     const canvas = this.canvases['macd-canvas'];
     const h = canvas ? canvas.height / this.dpr : 0;
+    if (!h) return;
     ctx.clearRect(0, 0, w, h);
     const { visStart, visEnd, xOff } = this.getView();
     const hist = this.macdData.hist;
@@ -713,31 +714,42 @@ export class ChartEngine {
     const range = vmax - vmin || 1;
     const zeroY = h - ((0 - vmin) / range) * h;
     const slot = w / this.viewBars;
+    const topPad = 18; // 给左上角标签留空
+    const chartH = h - topPad;
+    const yMacd = (v: number) => topPad + chartH - ((v - vmin) / range) * chartH;
+
+    // 右侧 Y 轴刻度
+    ctx.fillStyle = COLOR.textDim;
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 2; i++) {
+      const v = vmin + (range * i) / 2;
+      ctx.fillText(v.toFixed(3), w - 4, topPad + (chartH * (2 - i)) / 2 + 3);
+    }
 
     // 零轴
-    ctx.strokeStyle = 'rgba(0,0,0,.18)';
+    ctx.strokeStyle = 'rgba(0,0,0,.22)';
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(w, zeroY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(w - 36, zeroY); ctx.stroke();
 
     // Histogram
-    const barW = Math.max(2, slot * 0.55);
+    const barW = Math.max(3, slot * 0.6);
     for (let i = visStart; i < visEnd && i < hist.length; i++) {
       const v = hist[i];
       const x = this.xOf(i, xOff);
-      const y = h - ((v - vmin) / range) * h;
+      const y = yMacd(v);
       const isUp = v >= 0;
-      ctx.fillStyle = isUp ? 'rgba(239,68,68,.55)' : 'rgba(34,197,94,.55)';
-      // 上涨柱用红色，下跌柱用绿色（A股习惯）
-      ctx.fillRect(x - barW / 2, Math.min(y, zeroY), barW, Math.abs(y - zeroY));
+      ctx.fillStyle = isUp ? 'rgba(239,68,68,.75)' : 'rgba(34,197,94,.75)';
+      ctx.fillRect(x - barW / 2, Math.min(y, zeroY), barW, Math.max(1, Math.abs(y - zeroY)));
     }
 
     // DIF + DEA
     const drawLine = (arr: number[], color: string) => {
-      ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath();
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
       let started = false;
       for (let i = visStart; i < visEnd && i < arr.length; i++) {
         const x = this.xOf(i, xOff);
-        const y = h - ((arr[i] - vmin) / range) * h;
+        const y = yMacd(arr[i]);
         if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
       }
       ctx.stroke();
@@ -748,10 +760,11 @@ export class ChartEngine {
     // 数值标签（最新值）
     const lastIdx = visEnd - 1;
     if (lastIdx >= 0 && lastIdx < hist.length) {
-      ctx.font = '11px system-ui';
+      ctx.font = 'bold 11px system-ui';
       ctx.textAlign = 'left';
       const d = this.macdData.dif[lastIdx], a = this.macdData.dea[lastIdx], m = hist[lastIdx];
       const labels = [
+        { text: `MACD(${this.opts.macd.fast},${this.opts.macd.slow},${this.opts.macd.signal})`, color: COLOR.textDim },
         { text: `DIF:${d.toFixed(3)}`, color: COLOR.macd.dif },
         { text: `DEA:${a.toFixed(3)}`, color: COLOR.macd.dea },
         { text: `MACD:${m.toFixed(3)}`, color: m >= 0 ? COLOR.up : COLOR.down },
@@ -759,8 +772,8 @@ export class ChartEngine {
       let lx = 6;
       for (const lb of labels) {
         ctx.fillStyle = lb.color;
-        ctx.fillText(lb.text, lx, 15);
-        lx += ctx.measureText(lb.text).width + 12;
+        ctx.fillText(lb.text, lx, 14);
+        lx += ctx.measureText(lb.text).width + 10;
       }
     }
   }

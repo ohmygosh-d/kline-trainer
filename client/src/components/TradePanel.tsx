@@ -169,6 +169,11 @@ export function TradePanel({
                 <div className="text-base font-bold">卖出</div>
                 <div className="text-[11px] opacity-90 mt-0.5">{hasPosition ? `持仓 ${pos?.shares} 股 · M` : '无仓位可卖 · M'}</div>
               </button>
+              {!hasPosition && (
+                <div className="col-span-2 text-[11px] text-slate-400 text-center -mt-1">
+                  提示：买入后主图会出现一条<span className="text-blue-500 font-medium">蓝色虚线</span>标记成本价
+                </div>
+              )}
               <button
                 onClick={onNext}
                 disabled={finished}
