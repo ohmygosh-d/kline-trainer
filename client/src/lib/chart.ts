@@ -98,6 +98,9 @@ export class ChartEngine {
   private pulseAnim: PulseAnim | null = null;
   private animRAF: number | null = null;
   private initialized = false;
+  // 路由切换后 ChartPanel 会卸载再重挂，canvas 元素是全新的；这里记录已绑定的元素以便去重、避免重复挂监听
+  private boundCanvas: HTMLCanvasElement | null = null;
+  private boundWindow = false;
 
   // 指标行容器（用于按需显隐并重排主图高度）
   private rowEls: Record<string, HTMLElement | null> = {};
@@ -113,9 +116,14 @@ export class ChartEngine {
   public onSaveDrawings: ((key: string, drawings: Drawing[]) => void) | null = null;
   public onLoadDrawings: ((key: string) => Drawing[] | null) | null = null;
 
+  /**
+   * 初始化 / 重新绑定 canvas。
+   * 关键：路由切换（/train → /history → /train）会让 ChartPanel 卸载再重挂，
+   * canvas 元素是全新的 DOM 节点。单例的 initialized 守卫会导致旧引用失效、
+   * 新 canvas 永远接不到绘制。这里改为「每次进入都重新查询并绑定当前容器内的元素」，
+   * 事件监听按元素去重（同元素不重复挂），ResizeObserver 断开旧的再观察新的。
+   */
   init(container: HTMLElement) {
-    if (this.initialized) return;
-    this.initialized = true;
     this.container = container;
     const ids = ['kline-canvas', 'vol-canvas', 'macd-canvas', 'kdj-canvas', 'rsi-canvas', 'crosshair'];
     for (const id of ids) {
@@ -133,11 +141,13 @@ export class ChartEngine {
       }
     }
     this.bindResize();
-    this.bindEvents();
+    this.bindCanvasEvents();
+    if (!this.initialized) this.initialized = true;
     this.applyLayout();
   }
 
   private bindResize() {
+    if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
     if (typeof ResizeObserver === 'undefined') return;
     this.resizeObserver = new ResizeObserver(() => {
       if (this.resizeTimer) clearTimeout(this.resizeTimer);
@@ -860,12 +870,28 @@ export class ChartEngine {
   }
 
   // ---- Event handling ----
-  private bindEvents() {
+  /** 绑定 canvas 级监听（路由重挂后 canvas 是新元素，需重新挂；同元素不重复挂） */
+  private bindCanvasEvents() {
     const mc = this.canvases['kline-canvas'];
     if (!mc) return;
+    if (this.boundCanvas === mc) {
+      // 已绑定到同一个元素，只需确保 window 级监听存在
+      this.bindWindowEvents();
+      return;
+    }
+    // 解绑旧元素（通常已脱离文档，这里只是兜底）
+    if (this.boundCanvas) {
+      this.boundCanvas.removeEventListener('mousedown', this.onMouseDown);
+      this.boundCanvas.removeEventListener('wheel', this.onWheel);
+      this.boundCanvas.removeEventListener('dblclick', this.onDblClick);
+      this.boundCanvas.removeEventListener('mouseleave', this.onMouseLeave);
+      this.boundCanvas.removeEventListener('touchstart', this.onTouchStart);
+      this.boundCanvas.removeEventListener('touchmove', this.onTouchMove);
+      this.boundCanvas.removeEventListener('touchend', this.onTouchEnd);
+      this.boundCanvas.removeEventListener('touchcancel', this.onTouchEnd);
+    }
+    this.boundCanvas = mc;
     mc.addEventListener('mousedown', this.onMouseDown);
-    window.addEventListener('mousemove', this.onWindowMouseMove);
-    window.addEventListener('mouseup', this.onMouseUp);
     mc.addEventListener('wheel', this.onWheel, { passive: false });
     mc.addEventListener('dblclick', this.onDblClick);
     mc.addEventListener('mouseleave', this.onMouseLeave);
@@ -874,6 +900,15 @@ export class ChartEngine {
     mc.addEventListener('touchmove', this.onTouchMove, { passive: false } as any);
     mc.addEventListener('touchend', this.onTouchEnd);
     mc.addEventListener('touchcancel', this.onTouchEnd);
+    this.bindWindowEvents();
+  }
+
+  /** window 级监听只在首次绑定一次，避免重复累加 */
+  private bindWindowEvents() {
+    if (this.boundWindow) return;
+    this.boundWindow = true;
+    window.addEventListener('mousemove', this.onWindowMouseMove);
+    window.addEventListener('mouseup', this.onMouseUp);
   }
 
   private onMouseDown = (e: MouseEvent) => {
