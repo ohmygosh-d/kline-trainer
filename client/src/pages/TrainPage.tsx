@@ -75,9 +75,11 @@ export default function TrainPage() {
         let daily: StockData | null = null;
         try { daily = await StockAPI.byCodeDaily(data.code); } catch { /* 用展示周期兜底 */ }
         const windowDates = windowFromDaily(daily, data);
+        // 新一局的开局本金必须等于当前钱包余额（左上角显示的资金），而不是默认 10w
+        const capital = useStore.getState().wallet?.balance ?? wallet.balance;
         const s = trainer.startWithMarket(
           { bars: data.bars, code: data.code, symbol: data.name, startDate: data.bars[0]?.date || '', endDate: data.bars[data.bars.length - 1]?.date, isReal: data.isReal },
-          { capital: wallet.balance, period: p },
+          { capital, period: p },
           windowDates
         );
         setPeriod(p);

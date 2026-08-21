@@ -35,6 +35,8 @@ export interface TrainingState {
   startDate: string;
   trainStartDate: string;
   trainEndDate: string;
+  /** 本局开局本金（应等于当前钱包余额，不是固定 10w） */
+  capital: number;
   pnl: number;
   equity: number;
   _autoSold?: boolean;

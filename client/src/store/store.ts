@@ -26,6 +26,8 @@ interface AppState {
 // init() 仍会在后台用 /auth/me 校验 token，失效则自动登出。
 const bootUser = AuthAPI.isLoggedIn() ? AuthAPI.getUser() : null;
 const bootWallet = AuthAPI.isLoggedIn() ? WalletAPI.getWalletCache() : null;
+// 同时把缓存的钱包同步进 wallet 单例，避免 TrainPage 启动新局时读到默认 10w
+if (bootWallet) wallet.load(bootWallet);
 
 export const useStore = create<AppState>((set, get) => ({
   user: bootUser,

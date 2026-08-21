@@ -12,11 +12,12 @@ interface Props {
   onNewSession: () => void;
 }
 
-const INITIAL_CAPITAL = 100000;
-
 export function TradePanel({ training, finished, onBuy, onSell, onNext, onFinish, onNewSession }: Props) {
   const { showToast } = useStore();
   if (!training) return null;
+
+  // 本局本金：由训练状态带入，应等于当前钱包余额，支持破产/暴富的连续累积
+  const initialCapital = training.capital || 100000;
 
   const bar = training.bars[training.visibleCount - 1];
   const prevBar = training.bars[training.visibleCount - 2];
@@ -27,11 +28,11 @@ export function TradePanel({ training, finished, onBuy, onSell, onNext, onFinish
 
   const hasPosition = !!training.position;
   const pos = training.position;
-  const cash = INITIAL_CAPITAL - training.trades.reduce((s, t) => s + (t.action === 'buy' ? t.price * t.qty : -t.price * t.qty), 0);
+  const cash = initialCapital - training.trades.reduce((s, t) => s + (t.action === 'buy' ? t.price * t.qty : -t.price * t.qty), 0);
   const posVal = pos ? pos.shares * price : 0;
   const totalEquity = cash + posVal;
-  const pnl = totalEquity - INITIAL_CAPITAL;
-  const pnlPct = (pnl / INITIAL_CAPITAL) * 100;
+  const pnl = totalEquity - initialCapital;
+  const pnlPct = (pnl / initialCapital) * 100;
   const posPnl = pos ? (price - pos.entryPrice) * pos.shares : 0;
   const posPnlPct = pos ? (price / pos.entryPrice - 1) * 100 : 0;
 
@@ -91,7 +92,7 @@ export function TradePanel({ training, finished, onBuy, onSell, onNext, onFinish
       <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60">
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-400">总资产</span>
-          <span className="text-[11px] text-slate-400">本金 {fmtMoneyFull(INITIAL_CAPITAL)}</span>
+          <span className="text-[11px] text-slate-400">本金 {fmtMoneyFull(initialCapital)}</span>
         </div>
         <div className="text-2xl font-bold font-mono text-slate-800 mt-0.5 tracking-tight">{fmtMoneyFull(totalEquity)}</div>
         <div className="flex items-center justify-between mt-2 text-sm">

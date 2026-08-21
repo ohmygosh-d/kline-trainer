@@ -235,6 +235,7 @@ export class Trainer {
       // 关键：训练区间日期在所有周期下完全一致
       trainStartDate: this.state.windowStart,
       trainEndDate: this.state.windowEnd,
+      capital: this.state.capital,
       pnl: equity - this.state.capital,
       equity,
       _autoSold: this.state._autoSold,
