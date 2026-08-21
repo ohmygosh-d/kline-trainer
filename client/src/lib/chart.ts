@@ -154,7 +154,9 @@ export class ChartEngine {
     }
   }
 
-  /** 每个 canvas 按其自身区块尺寸设置，而不是用容器全尺寸（修复成交量/指标被撑满整屏） */
+  /** 每个 canvas 按其自身区块尺寸设置，而不是用容器全尺寸（修复成交量/指标被撑满整屏）。
+   * 注意：只设置 canvas 内部缓冲区尺寸，不设置 style.width/height，避免内联样式覆盖 Tailwind 的 w-full/h-full，
+   * 导致容器变小后 canvas 无法跟随收缩而与其它区域重叠。 */
   setupCanvas() {
     this.dpr = window.devicePixelRatio || 1;
     for (const id in this.canvases) {
@@ -164,8 +166,8 @@ export class ChartEngine {
       const w = rect.width, h = rect.height;
       c.width = Math.round(w * this.dpr);
       c.height = Math.round(h * this.dpr);
-      c.style.width = w + 'px';
-      c.style.height = h + 'px';
+      // 不固定 style 尺寸：让 CSS class (w-full h-full absolute inset-0) 控制显示尺寸，
+      // 这样父容器变化时 getBoundingClientRect 会返回最新尺寸，setupCanvas 可正确更新缓冲区。
       this.ctxs[id].setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     }
   }

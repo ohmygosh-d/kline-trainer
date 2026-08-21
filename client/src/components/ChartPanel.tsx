@@ -2,8 +2,8 @@ import { forwardRef } from 'react';
 
 export const ChartPanel = forwardRef<HTMLDivElement>((_props, ref) => {
   return (
-    <div ref={ref} className="flex-1 min-h-0 relative bg-slate-50 rounded-xl overflow-hidden border border-slate-200 shadow-sm">
-      <div className="absolute inset-0 flex flex-col">
+    <div ref={ref} data-chart-panel="1" className="flex-1 min-h-0 relative bg-slate-50 rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+      <div data-chart-inner="1" className="absolute inset-0 flex flex-col">
         {/* 主图 K线 —— flex-1 填满剩余高度（经过验证的可靠结构） */}
         <div className="flex-1 min-h-0 relative">
           <canvas id="kline-canvas" className="absolute inset-0 w-full h-full" />
