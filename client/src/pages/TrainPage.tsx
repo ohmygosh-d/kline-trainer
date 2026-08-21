@@ -7,6 +7,7 @@ import { wallet } from '../lib/wallet';
 import { chart } from '../lib/chart';
 import { ChartPanel } from '../components/ChartPanel';
 import { TradePanel } from '../components/TradePanel';
+import { IndicatorSettings } from '../components/IndicatorSettings';
 import { WalletBar } from '../components/WalletBar';
 import { ResultModal } from '../components/ResultModal';
 import { EventModal } from '../components/EventModal';
@@ -48,6 +49,7 @@ export default function TrainPage() {
   const [finished, setFinished] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [playing, setPlaying] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const playRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef<number>(Date.now());
 
@@ -367,6 +369,13 @@ export default function TrainPage() {
                 {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
               </button>
             ))}
+            <button
+              onClick={() => setShowSettings(true)}
+              title="K线设置"
+              className="ml-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-50 text-slate-500 hover:bg-slate-100 transition"
+            >
+              设置
+            </button>
           </div>
         </div>
       )}
@@ -426,6 +435,13 @@ export default function TrainPage() {
           onReview={enterReview}
           onNext={newSession}
           onClose={() => setShowEvent(false)}
+        />
+      )}
+      {showSettings && (
+        <IndicatorSettings
+          options={chart.getOptions()}
+          onChange={opts => chart.setOptions(opts)}
+          onClose={() => setShowSettings(false)}
         />
       )}
       <Toast />

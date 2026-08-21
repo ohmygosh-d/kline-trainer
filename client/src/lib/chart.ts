@@ -4,7 +4,7 @@
  */
 
 import type { Bar, Drawing, Position, Trade } from '../types';
-import { calcMA, calcMACD, calcKDJ, calcRSI, calcBOLL } from './indicators';
+import { calcMA, calcMAValues, calcEMA, calcMACD, calcKDJ, calcRSI, calcBOLL } from './indicators';
 
 const COLOR = {
   up: '#ef4444', upFill: '#ef4444',
@@ -43,6 +43,49 @@ interface Momentum { v: number; lastT: number; }
 interface ZoomAnim { t0: number; dur: number; fromBars: number; fromStart: number; toBars: number; toStart: number; }
 interface Draft { type: string; pts: { bi: number; price: number }[]; stage: number; price: number; }
 
+export interface MALine { period: number; color: string; width: number; }
+export interface ChartOptions {
+  showMA: boolean;
+  ma: MALine[];
+  showEMA: boolean;
+  ema: MALine[];
+  showBOLL: boolean;
+  boll: { period: number; mult: number };
+  showVol: boolean;
+  volMA: number[];
+  showMACD: boolean;
+  macd: { fast: number; slow: number; signal: number };
+  showKDJ: boolean;
+  kdj: { n: number };
+  showRSI: boolean;
+  rsi: { period: number };
+}
+
+const DEFAULT_OPTIONS: ChartOptions = {
+  showMA: true,
+  ma: [
+    { period: 5, color: '#f59e0b', width: 1.2 },
+    { period: 10, color: '#3b82f6', width: 1.2 },
+    { period: 30, color: '#ef4444', width: 1.2 },
+  ],
+  showEMA: false,
+  ema: [
+    { period: 5, color: '#f59e0b', width: 1.2 },
+    { period: 10, color: '#3b82f6', width: 1.2 },
+    { period: 20, color: '#8b5cf6', width: 1.2 },
+  ],
+  showBOLL: false,
+  boll: { period: 20, mult: 2 },
+  showVol: true,
+  volMA: [5, 10],
+  showMACD: true,
+  macd: { fast: 12, slow: 26, signal: 9 },
+  showKDJ: false,
+  kdj: { n: 9 },
+  showRSI: false,
+  rsi: { period: 6 },
+};
+
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 export class ChartEngine {
@@ -60,8 +103,9 @@ export class ChartEngine {
   private autoFollow = true;
   private period: string = 'daily';
 
-  private opts = { showMA: true, showVol: true, showMACD: true, showKDJ: false, showRSI: false, showBOLL: false, maPeriods: [5, 10, 30] };
+  private opts: ChartOptions = JSON.parse(JSON.stringify(DEFAULT_OPTIONS));
   private maData: (number | null)[][] = [];
+  private emaData: (number | null)[][] = [];
   private macdData: any = null;
   private kdjData: any = null;
   private rsiData: any = null;
@@ -143,7 +187,44 @@ export class ChartEngine {
     this.bindResize();
     this.bindCanvasEvents();
     if (!this.initialized) this.initialized = true;
+    this.loadOptions();
     this.applyLayout();
+  }
+
+  // ---- Indicator options ----
+  getOptions(): ChartOptions { return JSON.parse(JSON.stringify(this.opts)); }
+  setOptions(partial: Partial<ChartOptions>) {
+    this.opts = { ...this.opts, ...partial };
+    // 数组/对象要深拷贝避免引用污染
+    if (partial.ma) this.opts.ma = partial.ma.map(m => ({ ...m }));
+    if (partial.ema) this.opts.ema = partial.ema.map(m => ({ ...m }));
+    if (partial.boll) this.opts.boll = { ...partial.boll };
+    if (partial.volMA) this.opts.volMA = [...partial.volMA];
+    if (partial.macd) this.opts.macd = { ...partial.macd };
+    if (partial.kdj) this.opts.kdj = { ...partial.kdj };
+    if (partial.rsi) this.opts.rsi = { ...partial.rsi };
+    this.saveOptions();
+    this.computeIndicators();
+    this.applyLayout();
+  }
+  private saveOptions() {
+    try { localStorage.setItem('kt_chart_options', JSON.stringify(this.opts)); } catch {}
+  }
+  private loadOptions() {
+    try {
+      const raw = localStorage.getItem('kt_chart_options');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        this.opts = { ...DEFAULT_OPTIONS, ...parsed };
+        if (parsed.ma) this.opts.ma = parsed.ma.map((m: any) => ({ ...DEFAULT_OPTIONS.ma[0], ...m }));
+        if (parsed.ema) this.opts.ema = parsed.ema.map((m: any) => ({ ...DEFAULT_OPTIONS.ema[0], ...m }));
+        if (parsed.boll) this.opts.boll = { ...DEFAULT_OPTIONS.boll, ...parsed.boll };
+        if (parsed.volMA) this.opts.volMA = [...parsed.volMA];
+        if (parsed.macd) this.opts.macd = { ...DEFAULT_OPTIONS.macd, ...parsed.macd };
+        if (parsed.kdj) this.opts.kdj = { ...DEFAULT_OPTIONS.kdj, ...parsed.kdj };
+        if (parsed.rsi) this.opts.rsi = { ...DEFAULT_OPTIONS.rsi, ...parsed.rsi };
+      }
+    } catch {}
   }
 
   private bindResize() {
@@ -192,7 +273,7 @@ export class ChartEngine {
     };
     for (const id in vis) {
       const row = this.rowEls[id];
-      if (row) row.style.display = vis[id] ? '' : 'none';
+      if (row) row.classList.toggle('hidden', !vis[id]);
     }
     this.setupCanvas();
     this.draw();
@@ -296,11 +377,12 @@ export class ChartEngine {
 
   private computeIndicators() {
     if (this.bars.length === 0) return;
-    this.maData = this.opts.maPeriods.map(p => calcMA(this.bars, p));
-    this.macdData = calcMACD(this.bars);
-    this.kdjData = calcKDJ(this.bars);
-    this.rsiData = calcRSI(this.bars);
-    this.bollData = calcBOLL(this.bars);
+    this.maData = this.opts.ma.map(m => calcMA(this.bars, m.period));
+    this.emaData = this.opts.ema.map(m => calcEMA(this.bars.map(b => b.close), m.period));
+    this.macdData = calcMACD(this.bars, this.opts.macd.fast, this.opts.macd.slow, this.opts.macd.signal);
+    this.kdjData = calcKDJ(this.bars, this.opts.kdj.n);
+    this.rsiData = calcRSI(this.bars, this.opts.rsi.period);
+    this.bollData = calcBOLL(this.bars, this.opts.boll.period, this.opts.boll.mult);
   }
 
   private computeRanges() {
@@ -459,8 +541,9 @@ export class ChartEngine {
     if (this.opts.showMA) {
       for (let mi = 0; mi < this.maData.length; mi++) {
         const ma = this.maData[mi];
-        ctx.strokeStyle = COLOR.ma[mi % COLOR.ma.length];
-        ctx.lineWidth = 1.2;
+        const cfg = this.opts.ma[mi] || DEFAULT_OPTIONS.ma[mi % DEFAULT_OPTIONS.ma.length];
+        ctx.strokeStyle = cfg.color;
+        ctx.lineWidth = cfg.width;
         ctx.beginPath();
         let started = false;
         for (let i = visStart; i < visEnd && i < ma.length; i++) {
@@ -472,6 +555,29 @@ export class ChartEngine {
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
+      }
+    }
+
+    // EMA lines
+    if (this.opts.showEMA) {
+      for (let mi = 0; mi < this.emaData.length; mi++) {
+        const ema = this.emaData[mi];
+        const cfg = this.opts.ema[mi] || DEFAULT_OPTIONS.ema[mi % DEFAULT_OPTIONS.ema.length];
+        ctx.strokeStyle = cfg.color;
+        ctx.lineWidth = cfg.width;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        let started = false;
+        for (let i = visStart; i < visEnd && i < ema.length; i++) {
+          const v = ema[i];
+          if (v == null) { started = false; continue; }
+          const x = this.xOf(i, xOff);
+          const y = this.yOf(v);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
@@ -542,21 +648,54 @@ export class ChartEngine {
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0, h - 0.5); ctx.lineTo(w, h - 0.5); ctx.stroke();
     ctx.fillStyle = COLOR.textDim;
-    ctx.font = '10px system-ui';
+    ctx.font = '11px system-ui';
     ctx.textAlign = 'left';
-    ctx.fillText('VOL', 6, 12);
 
     const { visStart, visEnd, xOff } = this.getView();
     const slot = w / this.viewBars;
-    const cw = slot * 0.7;
+    const cw = Math.max(2, slot * 0.65);
+
+    // 均量线
+    const volMAs = this.opts.volMA.map(p => calcMAValues(this.bars.map(b => b.volume), p));
 
     for (let i = visStart; i < visEnd && i < this.bars.length; i++) {
       const b = this.bars[i];
       const x = this.xOf(i, xOff);
       const isUp = b.close >= b.open;
-      const vh = (b.volume / this.volMax) * h * 0.82;
-      ctx.fillStyle = isUp ? 'rgba(239,68,68,.55)' : 'rgba(34,197,94,.55)';
-      ctx.fillRect(x - cw / 2, h - vh, cw, vh);
+      const vh = (b.volume / this.volMax) * h * 0.78;
+      ctx.fillStyle = isUp ? 'rgba(239,68,68,.65)' : 'rgba(34,197,94,.65)';
+      ctx.fillRect(x - cw / 2, h - vh - 0.5, cw, vh);
+    }
+
+    const drawVolMA = (arr: (number | null)[], color: string) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      let started = false;
+      for (let i = visStart; i < visEnd && i < arr.length; i++) {
+        const v = arr[i];
+        if (v == null) { started = false; continue; }
+        const x = this.xOf(i, xOff);
+        const y = h - (v / this.volMax) * h * 0.78;
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    volMAs.forEach((arr, idx) => drawVolMA(arr, COLOR.ma[idx % COLOR.ma.length]));
+
+    const lastIdx = visEnd - 1;
+    if (lastIdx >= 0 && lastIdx < this.bars.length) {
+      const b = this.bars[lastIdx];
+      ctx.font = '10px system-ui';
+      ctx.fillStyle = COLOR.textDim;
+      ctx.textAlign = 'left';
+      let label = `VOL: ${(b.volume / 1e4).toFixed(0)}万`;
+      volMAs.forEach((arr, idx) => {
+        const v = arr[lastIdx];
+        if (v != null) label += `  MA${this.opts.volMA[idx]}:${(v / 1e4).toFixed(0)}万`;
+      });
+      ctx.fillText(label, 6, 14);
     }
   }
 
@@ -568,27 +707,33 @@ export class ChartEngine {
     const h = canvas ? canvas.height / this.dpr : 0;
     ctx.clearRect(0, 0, w, h);
     const { visStart, visEnd, xOff } = this.getView();
-    ctx.fillStyle = COLOR.textDim;
-    ctx.font = '10px system-ui';
-    ctx.textAlign = 'left';
-    ctx.fillText('MACD(12,26,9)', 6, 12);
     const hist = this.macdData.hist;
     const all = [...hist, ...this.macdData.dif, ...this.macdData.dea];
     const vmin = Math.min(...all), vmax = Math.max(...all);
     const range = vmax - vmin || 1;
     const zeroY = h - ((0 - vmin) / range) * h;
+    const slot = w / this.viewBars;
+
+    // 零轴
+    ctx.strokeStyle = 'rgba(0,0,0,.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(w, zeroY); ctx.stroke();
 
     // Histogram
+    const barW = Math.max(2, slot * 0.55);
     for (let i = visStart; i < visEnd && i < hist.length; i++) {
       const v = hist[i];
       const x = this.xOf(i, xOff);
       const y = h - ((v - vmin) / range) * h;
-      ctx.fillStyle = v >= 0 ? 'rgba(239,68,68,.5)' : 'rgba(34,197,94,.5)';
-      ctx.fillRect(x - 2, Math.min(y, zeroY), 4, Math.abs(y - zeroY));
+      const isUp = v >= 0;
+      ctx.fillStyle = isUp ? 'rgba(239,68,68,.55)' : 'rgba(34,197,94,.55)';
+      // 上涨柱用红色，下跌柱用绿色（A股习惯）
+      ctx.fillRect(x - barW / 2, Math.min(y, zeroY), barW, Math.abs(y - zeroY));
     }
+
     // DIF + DEA
     const drawLine = (arr: number[], color: string) => {
-      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath();
       let started = false;
       for (let i = visStart; i < visEnd && i < arr.length; i++) {
         const x = this.xOf(i, xOff);
@@ -599,6 +744,25 @@ export class ChartEngine {
     };
     drawLine(this.macdData.dif, COLOR.macd.dif);
     drawLine(this.macdData.dea, COLOR.macd.dea);
+
+    // 数值标签（最新值）
+    const lastIdx = visEnd - 1;
+    if (lastIdx >= 0 && lastIdx < hist.length) {
+      ctx.font = '11px system-ui';
+      ctx.textAlign = 'left';
+      const d = this.macdData.dif[lastIdx], a = this.macdData.dea[lastIdx], m = hist[lastIdx];
+      const labels = [
+        { text: `DIF:${d.toFixed(3)}`, color: COLOR.macd.dif },
+        { text: `DEA:${a.toFixed(3)}`, color: COLOR.macd.dea },
+        { text: `MACD:${m.toFixed(3)}`, color: m >= 0 ? COLOR.up : COLOR.down },
+      ];
+      let lx = 6;
+      for (const lb of labels) {
+        ctx.fillStyle = lb.color;
+        ctx.fillText(lb.text, lx, 15);
+        lx += ctx.measureText(lb.text).width + 12;
+      }
+    }
   }
 
   private drawKDJ() {
@@ -610,11 +774,17 @@ export class ChartEngine {
     ctx.clearRect(0, 0, w, h);
     const { visStart, visEnd, xOff } = this.getView();
     ctx.fillStyle = COLOR.textDim;
-    ctx.font = '10px system-ui';
+    ctx.font = '11px system-ui';
     ctx.textAlign = 'left';
-    ctx.fillText('KDJ(9,3,3)', 6, 12);
+    const lastIdx = visEnd - 1;
+    const k = this.kdjData.k[lastIdx], d = this.kdjData.d[lastIdx], j = this.kdjData.j[lastIdx];
+    if (lastIdx >= 0 && k != null) {
+      ctx.fillStyle = COLOR.kdj.k; ctx.fillText(`K:${k.toFixed(2)}`, 6, 15);
+      ctx.fillStyle = COLOR.kdj.d; ctx.fillText(`D:${d.toFixed(2)}`, 56, 15);
+      ctx.fillStyle = COLOR.kdj.j; ctx.fillText(`J:${j.toFixed(2)}`, 106, 15);
+    }
     const drawLine = (arr: number[], color: string) => {
-      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
       let started = false;
       for (let i = visStart; i < visEnd && i < arr.length; i++) {
         const x = this.xOf(i, xOff);
@@ -637,10 +807,13 @@ export class ChartEngine {
     ctx.clearRect(0, 0, w, h);
     const { visStart, visEnd, xOff } = this.getView();
     ctx.fillStyle = COLOR.textDim;
-    ctx.font = '10px system-ui';
+    ctx.font = '11px system-ui';
     ctx.textAlign = 'left';
-    ctx.fillText('RSI(6)', 6, 12);
-    ctx.strokeStyle = COLOR.rsi; ctx.lineWidth = 1; ctx.beginPath();
+    const lastIdx = visEnd - 1;
+    if (lastIdx >= 0 && lastIdx < this.rsiData.length) {
+      ctx.fillText(`RSI(${this.opts.rsi.period}):${this.rsiData[lastIdx].toFixed(2)}`, 6, 15);
+    }
+    ctx.strokeStyle = COLOR.rsi; ctx.lineWidth = 1.5; ctx.beginPath();
     let started = false;
     for (let i = visStart; i < visEnd && i < this.rsiData.length; i++) {
       const x = this.xOf(i, xOff);
@@ -720,15 +893,25 @@ export class ChartEngine {
     // Active position cost line
     if (this.activePosition && !this.reviewMode) {
       const y = this.yOf(this.activePosition.entryPrice);
-      ctx.strokeStyle = 'rgba(67,97,238,.4)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(this.mainW(), y); ctx.stroke();
+      const w = this.mainW();
+      // 阴影 glow
+      ctx.strokeStyle = 'rgba(67,97,238,.18)';
+      ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      // 主虚线
+      ctx.strokeStyle = '#4361ee';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
       ctx.setLineDash([]);
+      // 右侧标签
       ctx.fillStyle = '#4361ee';
-      ctx.font = '10px system-ui';
-      ctx.textAlign = 'left';
-      ctx.fillText('成本 ' + this.activePosition.entryPrice.toFixed(2), 4, y - 4);
+      ctx.font = 'bold 11px system-ui';
+      ctx.textAlign = 'right';
+      ctx.fillText('成本 ' + this.activePosition.entryPrice.toFixed(2), w - 4, y - 5);
+      // 左侧小圆点
+      ctx.fillStyle = '#4361ee';
+      ctx.beginPath(); ctx.arc(4, y, 3, 0, Math.PI * 2); ctx.fill();
     }
   }
 

@@ -1,23 +1,28 @@
 /** 技术指标计算 — MACD / KDJ / RSI / BOLL */
 import type { Bar } from '../types';
 
-function ema(values: number[], period: number): number[] {
-  const result: number[] = [];
+export function calcEMA(values: number[], period: number): (number | null)[] {
+  const result: (number | null)[] = [];
   const k = 2 / (period + 1);
-  let prev = values[0];
+  let prev: number | null = null;
   for (let i = 0; i < values.length; i++) {
-    prev = i === 0 ? values[0] : values[i] * k + prev * (1 - k);
+    if (prev === null) { prev = values[i]; result.push(values[i]); continue; }
+    prev = values[i] * k + prev * (1 - k);
     result.push(prev);
   }
   return result;
 }
 
 export function calcMA(bars: Bar[], period: number): (number | null)[] {
+  return calcMAValues(bars.map(b => b.close), period);
+}
+
+export function calcMAValues(values: number[], period: number): (number | null)[] {
   const result: (number | null)[] = [];
-  for (let i = 0; i < bars.length; i++) {
+  for (let i = 0; i < values.length; i++) {
     if (i < period - 1) { result.push(null); continue; }
     let sum = 0;
-    for (let j = i - period + 1; j <= i; j++) sum += bars[j].close;
+    for (let j = i - period + 1; j <= i; j++) sum += values[j];
     result.push(sum / period);
   }
   return result;
@@ -25,12 +30,12 @@ export function calcMA(bars: Bar[], period: number): (number | null)[] {
 
 export function calcMACD(bars: Bar[], fast = 12, slow = 26, signal = 9) {
   const closes = bars.map(b => b.close);
-  const emaFast = ema(closes, fast);
-  const emaSlow = ema(closes, slow);
-  const dif = closes.map((_, i) => emaFast[i] - emaSlow[i]);
-  const dea = ema(dif, signal);
-  const hist = dif.map((d, i) => 2 * (d - dea[i]));
-  return { dif, dea, hist };
+  const emaFast = calcEMA(closes, fast);
+  const emaSlow = calcEMA(closes, slow);
+  const dif = closes.map((_, i) => (emaFast[i] ?? 0) - (emaSlow[i] ?? 0));
+  const deaArr = calcEMA(dif, signal);
+  const hist = dif.map((d, i) => 2 * (d - (deaArr[i] ?? 0)));
+  return { dif, dea: deaArr, hist };
 }
 
 export function calcKDJ(bars: Bar[], n = 9) {

@@ -58,6 +58,7 @@ export function TradePanel({
   const pnl = totalEquity - initialCapital;
   const pnlPct = (pnl / initialCapital) * 100;
   const posPnl = pos ? (price - pos.entryPrice) * pos.shares : 0;
+  const posPnlPct = pos && pos.entryPrice ? ((price - pos.entryPrice) / pos.entryPrice) * 100 : 0;
 
   // 交易统计
   const buyTrades = training.trades.filter(t => t.action === 'buy');
@@ -118,9 +119,20 @@ export function TradePanel({
           <InfoRow label="本局收益" value={`${trendSign(pnl)}${fmtMoneyFull(pnl)}（${fmtPct(pnlPct)}）`} valueClass={trendCls(pnl)} />
           {pos && (
             <>
-              <InfoRow label="成本价" value={fmtPrice(pos.entryPrice)} />
-              <InfoRow label="持仓" value={`${pos.shares} 股`} />
-              <InfoRow label="持仓盈亏" value={`${trendSign(posPnl)}${fmtMoneyFull(posPnl)}`} valueClass={trendCls(posPnl)} />
+              <div className="mt-2 p-3 rounded-xl bg-blue-50/80 border border-blue-100">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-blue-400">成本价</span>
+                  <span className="text-xs text-blue-400">持仓 {pos.shares} 股</span>
+                </div>
+                <div className="flex items-end justify-between">
+                  <div className="text-xl font-bold font-mono text-slate-800">{fmtPrice(pos.entryPrice)}</div>
+                  <div className={`text-right ${trendCls(posPnl)}`}>
+                    <div className="text-sm font-semibold font-mono">{trendSign(posPnl)}{fmtMoneyFull(posPnl)}</div>
+                    <div className="text-xs font-mono">{trendSign(posPnlPct)}{fmtPct(posPnlPct)}</div>
+                  </div>
+                </div>
+                <div className="text-[11px] text-blue-400 mt-1">主图已用蓝色虚线标记成本位置</div>
+              </div>
             </>
           )}
         </Section>
