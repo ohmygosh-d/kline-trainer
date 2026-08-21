@@ -30,3 +30,4 @@ Thumbs.db
 profile_dump.html
 client/dist_bak/
 .trash/
+*.bundle

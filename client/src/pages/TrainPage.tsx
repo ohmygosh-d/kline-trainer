@@ -7,7 +7,6 @@ import { wallet } from '../lib/wallet';
 import { chart } from '../lib/chart';
 import { ChartPanel } from '../components/ChartPanel';
 import { TradePanel } from '../components/TradePanel';
-import { DrawToolbar } from '../components/DrawToolbar';
 import { WalletBar } from '../components/WalletBar';
 import { ResultModal } from '../components/ResultModal';
 import { EventModal } from '../components/EventModal';
@@ -15,11 +14,26 @@ import { ReviewBar } from '../components/ReviewBar';
 import { Toast } from '../components/Toast';
 import type { TrainingState, Drawing, StockData } from '../types';
 import { computeWindowDates } from '../lib/window';
+import { fmtPrice, fmtPct, fmtVol } from '../lib/format';
+
+/** 双盲模式下隐藏真实股票信息 */
+const BLIND_SYMBOL = 'xxxx';
+const BLIND_CODE = 'xxxx-xx';
 
 /** 以日线全量历史推导「同一时间段」的训练窗口（日/周/月三档共用） */
 function windowFromDaily(daily: StockData | null, fallback: StockData): { start: string; end: string } {
   if (daily && daily.bars && daily.bars.length >= 200) return computeWindowDates(daily.bars);
   return computeWindowDates(fallback.bars);
+}
+
+/** 顶部状态栏单个指标 */
+function Stat({ label, value, valueClass = '' }: { label: string; value: string; valueClass?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-w-[64px] px-2 border-r border-slate-100 last:border-r-0">
+      <span className={`text-sm font-semibold font-mono ${valueClass}`}>{value}</span>
+      <span className="text-[10px] text-slate-400 mt-0.5">{label}</span>
+    </div>
+  );
 }
 
 export default function TrainPage() {
@@ -31,13 +45,39 @@ export default function TrainPage() {
   const [event, setEvent] = useState<{ type: string; stats: any; state: TrainingState } | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
   const [replayIdx, setReplayIdx] = useState<number | null>(null);
-  const [indicators, setIndicators] = useState({ ma: true, vol: true, macd: false, kdj: false, rsi: false, boll: false });
   const [finished, setFinished] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef<number>(Date.now());
+
   const INIT_PERIOD = (() => {
     const p = new URLSearchParams(location.search).get('period');
     return p === 'weekly' || p === 'monthly' ? p : 'daily';
   })();
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>(INIT_PERIOD);
+
+  // 自动播放
+  useEffect(() => {
+    if (!playing || !training || finished) {
+      if (playRef.current) { clearInterval(playRef.current); playRef.current = null; }
+      return;
+    }
+    const ms = speed <= 0.5 ? 1000 : speed === 1 ? 500 : speed === 2 ? 250 : speed === 3 ? 150 : 100;
+    playRef.current = setInterval(() => {
+      const s = trainer.next();
+      if (s) {
+        chart.setProgress(s.visibleCount);
+        chart.setTradeMarkers(s.trades, s.position);
+        setTraining(s);
+      }
+    }, ms);
+    return () => {
+      if (playRef.current) { clearInterval(playRef.current); playRef.current = null; }
+    };
+  }, [playing, training, finished, speed, setTraining]);
+
+  const togglePlay = () => setPlaying(p => !p);
 
   // 开局：p=周期；code=指定股票（同股票换周期）。无 code 时为「新一局」（随机选股，仅训练结束后触发）
   const startNew = useCallback(async (p: 'daily' | 'weekly' | 'monthly', code?: string) => {
@@ -47,35 +87,26 @@ export default function TrainPage() {
     setReviewMode(false);
     setReplayIdx(null);
     setFinished(false);
+    setPlaying(false);
     chart.setReviewMode(false);
+    startTimeRef.current = Date.now();
     try {
       if (code) {
-        // 同股票换周期：只按 code 取，绝不偷偷回退到随机新股票；
-        // 训练窗口日期沿用本局已确定的「同一时间段」，仅换分辨率并保留进度
         const data = await StockAPI.byCode(code, p);
-        if ((data as any).fromCache) {
-          showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
-        }
+        if ((data as any).fromCache) showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
         const s = trainer.applyPeriod(data.bars, p);
-        if (!s) {
-          showToast('周期切换失败，已停留在原行情，可稍后重试', 'error');
-        } else {
+        if (!s) showToast('周期切换失败，已停留在原行情，可稍后重试', 'error');
+        else {
           setPeriod(p);
           setTraining(s);
-          const pLabel = p === 'weekly' ? '周线' : p === 'monthly' ? '月线' : '日线';
-          showToast(`切换至${pLabel}（同一只股票·同一时间段） · ${s.symbol}（${s.code}）`, 'success');
+          showToast(`切换至${p === 'weekly' ? '周线' : p === 'monthly' ? '月线' : '日线'}（同一时间段）`, 'success');
         }
       } else {
-        // 新一局：随机选股（仅训练结束后由「下一盘」触发）
         const data = await StockAPI.random(p);
-        if ((data as any).fromCache) {
-          showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
-        }
-        // 以日线全量历史推导训练窗口的两个边界日期（日/周/月共用，保证时间段一致）
+        if ((data as any).fromCache) showToast('网络异常，已使用本地缓存行情（非最新）', 'error');
         let daily: StockData | null = null;
         try { daily = await StockAPI.byCodeDaily(data.code); } catch { /* 用展示周期兜底 */ }
         const windowDates = windowFromDaily(daily, data);
-        // 新一局的开局本金必须等于当前钱包余额（左上角显示的资金），而不是默认 10w
         const capital = useStore.getState().wallet?.balance ?? wallet.balance;
         const s = trainer.startWithMarket(
           { bars: data.bars, code: data.code, symbol: data.name, startDate: data.bars[0]?.date || '', endDate: data.bars[data.bars.length - 1]?.date, isReal: data.isReal },
@@ -84,26 +115,18 @@ export default function TrainPage() {
         );
         setPeriod(p);
         setTraining(s);
-        showToast(`新训练开始 · ${s.symbol}（${s.code}）· ${s.isReal ? '真实A股' : '模拟数据'}`, 'success');
+        showToast('双盲训练开始 · 隐藏股票名称与日期', 'success');
       }
     } catch (e: any) {
-      if (code) {
-        // 同股票意图失败：保留当前训练，不换股票、不切周期
-        showToast('该股票此周期数据获取失败，已停留在原行情，可稍后重试', 'error');
-      } else {
-        showToast(e?.response?.data?.error || '数据加载失败', 'error');
-      }
+      if (code) showToast('该股票此周期数据获取失败，已停留在原行情，可稍后重试', 'error');
+      else showToast(e?.response?.data?.error || '数据加载失败', 'error');
     } finally {
       setLoading(false);
     }
   }, [period, setTraining, showToast]);
 
-  // 新一局（训练结束后「下一盘」）：随机选股 → 会换股票（这是唯一换股票的地方）
-  const newSession = useCallback(() => {
-    startNew(period);
-  }, [period, startNew]);
+  const newSession = useCallback(() => { startNew(period); }, [period, startNew]);
 
-  // 日/周/月线切换：保持同一只股票换周期；训练结束前绝不更换股票
   const switchPeriod = (p: 'daily' | 'weekly' | 'monthly') => {
     if (!training || finished) return;
     if (p === training.period) return;
@@ -116,7 +139,6 @@ export default function TrainPage() {
       try { await DrawingsAPI.save(key.split('_')[0], key.split('_')[1], drawings); } catch {}
     };
     chart.onLoadDrawings = (key) => {
-      // Synchronous fallback from localStorage
       const local = localStorage.getItem(`kt_draw_${key}`);
       return local ? JSON.parse(local) : [];
     };
@@ -144,7 +166,6 @@ export default function TrainPage() {
   // Load first training session
   useEffect(() => {
     newSession();
-    // Resize handler
     const onResize = () => chart.setupCanvas();
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -154,10 +175,12 @@ export default function TrainPage() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
+      if (e.altKey && e.key === 'Enter') { e.preventDefault(); doFinish(); return; }
       if (finished) return;
-      if (e.key === 'b' || e.key === 'B') { doBuy(1); e.preventDefault(); }
-      else if (e.key === 'm' || e.key === 'M') { doSell(1); e.preventDefault(); }
-      else if (e.key === ' ') { doNext(); e.preventDefault(); }
+      if (e.key === 'b' || e.key === 'B') { e.preventDefault(); doBuy(2); }
+      else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); doSell(2); }
+      else if (e.key === ' ' || e.key === 'h' || e.key === 'H') { e.preventDefault(); doNext(); }
+      else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'Escape') {
         if (chart.getActiveTool() !== 'cursor') chart.setActiveTool('cursor');
       }
@@ -212,6 +235,7 @@ export default function TrainPage() {
   useEffect(() => {
     trainer.onFinish(async (s) => {
       setFinished(true);
+      setPlaying(false);
       const stats = trainer.getStats();
       if (!stats) return;
       const event = await finishTraining(stats, s);
@@ -232,9 +256,9 @@ export default function TrainPage() {
     setShowEvent(false);
     setReviewMode(true);
     setReplayIdx(null);
+    setPlaying(false);
     chart.setReviewMode(true);
     chart.setTradeMarkers(training.trades || [], null);
-    // 复盘：加载训练结束节点之后到今天为止的最新 K 线（数据已拉取，定位到边界处展示）
     const tail = Math.max(0, training.bars.length - training.trainEnd);
     const today = training.bars[training.bars.length - 1]?.date || '';
     showToast(`已加载训练结束后的最新走势（${tail} 根K线，至 ${today}）`, 'success');
@@ -258,17 +282,6 @@ export default function TrainPage() {
     });
   };
 
-  const toggleIndicator = (key: keyof typeof indicators) => {
-    const next = { ...indicators, [key]: !indicators[key] };
-    setIndicators(next);
-    chart.toggleMA(next.ma);
-    chart.toggleVol(next.vol);
-    chart.toggleMACD(next.macd);
-    chart.toggleKDJ(next.kdj);
-    chart.toggleRSI(next.rsi);
-    chart.toggleBOLL(next.boll);
-  };
-
   if (loading && !training) {
     return (
       <div className="h-screen flex flex-col bg-slate-50">
@@ -283,7 +296,7 @@ export default function TrainPage() {
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
                   <div className="w-10 h-10 border-2 border-slate-200 border-t-brand-500 rounded-full animate-spin mx-auto mb-3" />
-                  <div className="text-sm text-slate-400">正在随机选取全市场股票...</div>
+                  <div className="text-sm text-slate-400">正在随机选取双盲训练股票...</div>
                 </div>
               </div>
             </div>
@@ -299,78 +312,71 @@ export default function TrainPage() {
     );
   }
 
+  const bar = training?.bars[training.visibleCount - 1];
+  const prevBar = training && training.visibleCount > 1 ? training.bars[training.visibleCount - 2] : null;
+  const price = bar?.close ?? 0;
+  const prevClose = prevBar?.close ?? price;
+  const change = price - prevClose;
+  const changePct = prevClose ? (change / prevClose) * 100 : 0;
+  const trendClass = change > 0 ? 'text-red-500' : change < 0 ? 'text-green-500' : 'text-slate-500';
+
   return (
     <div className="h-screen flex flex-col bg-slate-50">
       {/* Top bar */}
-      <header className="bg-white border-b border-slate-200 flex items-center flex-wrap px-4 gap-2 sm:gap-4 py-1.5 min-h-12">
+      <header className="bg-white border-b border-slate-200 flex items-center px-4 gap-3 h-12 shrink-0">
         <div className="font-bold text-slate-800">📈 K线练习助手</div>
         <WalletBar />
         <div className="flex-1" />
         <Link to="/history" className="hidden sm:block text-sm text-slate-500 hover:text-brand-500">训练记录</Link>
         <Link to="/profile" className="hidden sm:block text-sm text-slate-500 hover:text-brand-500">用户中心</Link>
-        <div className="hidden sm:block text-sm text-slate-400">|</div>
+        <div className="hidden sm:block text-sm text-slate-300">|</div>
         <span className="text-sm text-slate-600">{user?.username}</span>
         <button onClick={logout} className="text-sm text-slate-400 hover:text-red-500">退出</button>
       </header>
 
+      {/* Status bar */}
+      {training && bar && (
+        <div className="bg-white border-b border-slate-200 px-3 h-14 shrink-0 flex items-center gap-3 overflow-x-auto">
+          <div className="flex items-center gap-2 pr-3 border-r border-slate-100 shrink-0">
+            <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-500 text-xs font-semibold">进行中</span>
+            <span className="text-sm font-bold text-slate-700">{BLIND_SYMBOL}</span>
+            <span className="text-xs text-slate-400">{BLIND_CODE}</span>
+          </div>
+          <Stat label="现价" value={fmtPrice(price)} valueClass={trendClass} />
+          <Stat label="涨跌" value={`${change >= 0 ? '+' : ''}${fmtPrice(change)}`} valueClass={trendClass} />
+          <Stat label="涨跌幅" value={fmtPct(changePct)} valueClass={trendClass} />
+          <Stat label="开盘" value={fmtPrice(bar.open)} />
+          <Stat label="最高" value={fmtPrice(bar.high)} />
+          <Stat label="最低" value={fmtPrice(bar.low)} />
+          <Stat label="量比" value="--" />
+          <Stat label="换手" value="--" />
+          <div className="flex flex-col items-center justify-center min-w-[80px] px-2">
+            <span className="text-sm font-mono text-slate-700">xxxx-xx-xx</span>
+            <span className="text-[10px] text-slate-400 mt-0.5">日期</span>
+          </div>
+          <div className="flex-1" />
+          {/* 周期切换 */}
+          <div className="flex items-center gap-1 shrink-0 pl-2">
+            {(['daily', 'weekly', 'monthly'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => switchPeriod(p)}
+                disabled={finished}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${period === p ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-sm' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}
+              >
+                {p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Main layout */}
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-[1fr_320px] min-h-0 overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-[1fr_340px] min-h-0 overflow-hidden">
         {/* Chart area */}
         <div className="flex flex-col p-2 min-h-0 overflow-hidden">
-          {/* Toolbar */}
-          <div className="flex items-center gap-2 mb-1 px-1 flex-wrap">
-            <DrawToolbar />
-            {/* 周期切换：日线 / 周线 / 月线 —— 训练结束前切换只换周期、不换股票 */}
-            <div className="flex items-center gap-1 mr-1">
-              {(['daily', 'weekly', 'monthly'] as const).map(p => (
-                <button
-                  key={p}
-                  onClick={() => switchPeriod(p)}
-                  disabled={finished}
-                  title={finished ? '训练已结束，点击「下一盘」换一只股票' : '切换周期（同一只股票）'}
-                  className={`px-2.5 py-1.5 rounded-lg text-sm font-medium transition ${period === p ? 'bg-brand-500 text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-400 hover:text-slate-600'} ${finished ? 'opacity-40 cursor-not-allowed hover:text-slate-400' : ''}`}
-                >{p === 'daily' ? '日线' : p === 'weekly' ? '周线' : '月线'}</button>
-              ))}
-            </div>
-            <div className="flex-1" />
-            <div className="flex items-center gap-1">
-              <button onClick={() => chart.zoomBy(0.87)} className="px-2 py-1 bg-white border border-slate-200 rounded text-sm hover:bg-slate-50">−</button>
-              <button onClick={() => chart.zoomBy(1.15)} className="px-2 py-1 bg-white border border-slate-200 rounded text-sm hover:bg-slate-50">+</button>
-              <button onClick={() => chart.resetView()} className="px-2 py-1 bg-white border border-slate-200 rounded text-sm hover:bg-slate-50">⟲</button>
-            </div>
-            <div className="flex items-center gap-1 ml-2">
-              {(['ma', 'vol', 'macd', 'kdj', 'rsi', 'boll'] as const).map(k => (
-                <button
-                  key={k}
-                  onClick={() => toggleIndicator(k)}
-                  className={`px-2 py-1 rounded text-xs font-medium transition ${indicators[k] ? 'bg-brand-500 text-white' : 'bg-white border border-slate-200 text-slate-400 hover:text-slate-600'}`}
-                >{k.toUpperCase()}</button>
-              ))}
-            </div>
-          </div>
           {/* Chart canvas */}
           <ChartPanel ref={chartRef} />
-          {/* Stock info */}
-          {training && (
-            <div className="mt-1 px-3 py-2 bg-white border border-slate-200 rounded-xl shadow-sm flex items-center gap-4 text-sm flex-wrap">
-              <span className="font-bold text-slate-800">{training.symbol}</span>
-              <span className="text-slate-400">{training.code}</span>
-              <span className={`text-xs px-1.5 py-0.5 rounded ${training.isReal ? 'bg-red-50 text-red-500' : 'bg-slate-50 text-slate-400'}`}>{training.isReal ? '真实A股' : '模拟'}</span>
-              <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{training.period === 'weekly' ? '周线' : training.period === 'monthly' ? '月线' : '日线'}</span>
-              <span className="text-slate-300">|</span>
-              {reviewMode ? (
-                <span className="text-amber-600 font-medium">复盘模式 · 上市 {training.bars[0]?.date} → 今天 {training.bars[training.bars.length - 1]?.date}（含训练结束后的最新走势）</span>
-              ) : (
-                <>
-                  <span className="text-slate-500">进度 {training.dailyProgress} / {training.dailyTotal}</span>
-                  <span className="text-slate-300">|</span>
-                  <span className="text-slate-500">训练区间 <span className="font-medium text-slate-700">{training.trainStartDate} ~ {training.trainEndDate}</span></span>
-                  <span className="text-slate-300">|</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-brand-50 text-brand-600">日/周/月同一时间段</span>
-                </>
-              )}
-            </div>
-          )}
         </div>
         {/* Trade panel */}
         <TradePanel
@@ -381,6 +387,10 @@ export default function TrainPage() {
           onNext={doNext}
           onFinish={doFinish}
           onNewSession={newSession}
+          speed={speed}
+          setSpeed={setSpeed}
+          playing={playing}
+          togglePlay={togglePlay}
         />
       </div>
       {/* Review bar */}

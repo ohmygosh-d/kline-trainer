@@ -10,18 +10,18 @@ const COLOR = {
   up: '#ef4444', upFill: '#ef4444',
   down: '#22c55e', downFill: '#22c55e',
   flat: '#94a3b8',
-  ma: ['#f59e0b', '#3b82f6', '#f97316', '#8b5cf6'],
+  ma: ['#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6'],
   boll: { mid: '#f59e0b', upper: 'rgba(59,130,246,.45)', lower: 'rgba(59,130,246,.45)' },
   kdj: { k: '#f59e0b', d: '#3b82f6', j: '#f97316' },
   rsi: '#8b5cf6',
   macd: { dif: '#3b82f6', dea: '#f59e0b' },
-  grid: 'rgba(0,0,0,.10)',
-  gridStrong: 'rgba(0,0,0,.16)',
+  grid: 'rgba(0,0,0,.05)',
+  gridStrong: 'rgba(0,0,0,.10)',
   text: '#94a3b8',
-  textDim: '#64748b',
-  textBright: '#334155',
-  cross: 'rgba(148,163,184,.6)',
-  zoneBg: 'rgba(0,0,0,.02)',
+  textDim: '#94a3b8',
+  textBright: '#475569',
+  cross: 'rgba(148,163,184,.5)',
+  zoneBg: 'rgba(67,97,238,.03)',
   bg: '#ffffff',
 };
 
@@ -60,7 +60,7 @@ export class ChartEngine {
   private autoFollow = true;
   private period: string = 'daily';
 
-  private opts = { showMA: true, showVol: true, showMACD: false, showKDJ: false, showRSI: false, showBOLL: false, maPeriods: [5, 10, 20] };
+  private opts = { showMA: true, showVol: true, showMACD: true, showKDJ: false, showRSI: false, showBOLL: false, maPeriods: [5, 10, 30] };
   private maData: (number | null)[][] = [];
   private macdData: any = null;
   private kdjData: any = null;
